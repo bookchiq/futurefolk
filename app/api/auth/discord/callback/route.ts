@@ -2,13 +2,15 @@
  * Discord OAuth callback.
  *
  * After the user finishes onboarding, the survey responses are stored as a
- * pending profile keyed by an http-only `ff_pending_session` cookie. When
- * Discord redirects back here with an OAuth `code`, we:
+ * pending profile keyed by an http-only `ff_pending_session` cookie. The
+ * /api/auth/discord/start route uses that same session id as the OAuth
+ * `state` parameter. When Discord redirects back here we:
  *
- *   1. Exchange the code for an access token (Discord token endpoint).
- *   2. Fetch the user's Discord identity (id, username/global_name).
- *   3. Promote the pending profile to a real `users` row keyed by Discord ID.
- *   4. Clear the session cookie and redirect to /onboarding/done.
+ *   1. Verify `state` matches the session cookie (CSRF protection).
+ *   2. Exchange the code for an access token (Discord token endpoint).
+ *   3. Fetch the user's Discord identity (id, username/global_name).
+ *   4. Promote the pending profile to a real `users` row keyed by Discord ID.
+ *   5. Clear the session cookie and redirect to /onboarding/done.
  *
  * If Discord OAuth env vars aren't configured locally, we fall through with
  * a useful error rather than a silent success — voice profile is the whole
@@ -40,6 +42,7 @@ interface DiscordUser {
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get("code");
+  const state = searchParams.get("state");
   const error = searchParams.get("error");
 
   if (error) {
@@ -56,9 +59,27 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Verify the state parameter against the session cookie BEFORE doing any
+  // network work. State == session id (set in /api/auth/discord/start). If
+  // they don't match, this isn't our redirect — bail.
+  const cookieStore = await cookies();
+  const sessionId = cookieStore.get(PENDING_COOKIE)?.value;
+
+  if (!state || !sessionId || state !== sessionId) {
+    console.error(
+      "[Futurefolk] Discord OAuth state mismatch (state present:",
+      Boolean(state),
+      "cookie present:",
+      Boolean(sessionId),
+      ")"
+    );
+    return NextResponse.redirect(
+      new URL("/onboarding/connect?error=invalid_state", request.url)
+    );
+  }
+
   const clientId =
     process.env.DISCORD_CLIENT_ID ??
-    process.env.NEXT_PUBLIC_DISCORD_CLIENT_ID ??
     process.env.DISCORD_APP_ID ??
     process.env.DISCORD_APPLICATION_ID;
   const clientSecret = process.env.DISCORD_CLIENT_SECRET;
@@ -126,35 +147,29 @@ export async function GET(request: NextRequest) {
   }
 
   // 3. Promote pending profile (if any) to a real users row.
-  const cookieStore = await cookies();
-  const sessionId = cookieStore.get(PENDING_COOKIE)?.value;
+  // sessionId / cookieStore came from the state-verification step above.
   const displayName = user.global_name || user.username || null;
 
-  if (sessionId) {
-    try {
-      const promoted = await promotePendingToUser(
-        sessionId,
-        user.id,
-        displayName
-      );
-      if (!promoted) {
-        console.warn(
-          "[Futurefolk] OAuth callback: no pending profile for session",
-          sessionId
-        );
-      } else {
-        console.log("[Futurefolk] Voice profile linked to Discord user", user.id);
-      }
-    } catch (err) {
-      console.error("[Futurefolk] Failed to promote pending profile:", err);
-    }
-    // Clear the pending session cookie regardless — it's single-use.
-    cookieStore.delete(PENDING_COOKIE);
-  } else {
-    console.warn(
-      "[Futurefolk] OAuth callback: no pending session cookie. The user may have completed OAuth without finishing the survey first."
+  try {
+    const promoted = await promotePendingToUser(
+      sessionId,
+      user.id,
+      displayName
     );
+    if (!promoted) {
+      console.warn(
+        "[Futurefolk] OAuth callback: no pending profile for session",
+        sessionId,
+        "(user may have hit /api/auth/discord/start without finishing the survey)"
+      );
+    } else {
+      console.log("[Futurefolk] Voice profile linked to Discord user", user.id);
+    }
+  } catch (err) {
+    console.error("[Futurefolk] Failed to promote pending profile:", err);
   }
+  // Clear the pending session cookie — it's single-use.
+  cookieStore.delete(PENDING_COOKIE);
 
   return NextResponse.redirect(new URL("/onboarding/done", request.url));
 }
