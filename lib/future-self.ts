@@ -1,15 +1,44 @@
 /**
- * Future-self response generator — STUB.
+ * Future-self response generator.
  *
- * Returns hardcoded placeholder text. The real implementation will use the
- * AI SDK with a system prompt constructed from the user's voice profile.
- * See `.v0/instructions.md` → "Voice direction" before fleshing this out.
+ * Pulls the user's voice profile, builds the system prompt, and asks the
+ * model for a response. The system prompt is the load-bearing part — it's
+ * built verbatim from the templates in `.v0/prompts.md`.
  *
- * The character (1y vs 5y future-self) and the conversation history must
- * be carried through here — that's why the signatures already accept them.
+ * Flow:
+ *   1. Look up VoiceProfile by Discord user ID. If missing, return a brief
+ *      "haven't onboarded yet" message and stop.
+ *   2. Build system prompt: shared base + horizon overlay + voice + onboarding
+ *      context + trigger context.
+ *   3. Call generateText with claude-sonnet-4.6 (zero-config in AI Gateway).
+ *   4. Run the result through a tell-detector. If it trips, regenerate ONCE
+ *      with an explicit "you wrote one of those tells, try again" instruction.
+ *      If it still trips, log a warning and ship it anyway — never loop.
+ *   5. Return the final string. The caller posts it to Discord.
+ *
+ * Why generateText and not streamText: ChatSDK can stream into Discord, but
+ * the tell-detector is a runtime safety net — we need the full text before
+ * deciding whether to regenerate. Sonnet at moderate length is fast enough
+ * that the tradeoff is fine.
  */
 
-import type { Horizon, VoiceProfile } from "./voice-profile";
+import { generateText, type ModelMessage } from "ai";
+
+import {
+  buildSystemPrompt,
+  buildTriggerContext,
+} from "./voice";
+import {
+  getVoiceProfile,
+  type Horizon,
+  type VoiceProfile,
+} from "./voice-profile";
+import type { ConversationTurn } from "./conversation";
+
+const MODEL = "anthropic/claude-sonnet-4.6";
+// Hard ceiling so the model can't write essays even if the prompt fails.
+// Match-length-of-user is enforced in the system prompt.
+const MAX_OUTPUT_TOKENS = 600;
 
 export interface FutureSelfTurn {
   role: "user" | "assistant";
@@ -17,42 +46,190 @@ export interface FutureSelfTurn {
 }
 
 interface GenerateOpts {
-  profile: VoiceProfile;
+  /** Discord user ID — used to load voice profile from DB */
+  discordUserId: string;
   horizon: Horizon;
-  /** What present-self wanted to talk about (slash command `about`, reaction message text, or follow-up message) */
+  /**
+   * What present-self said. For slash/reaction triggers, this is the topic
+   * or reacted-message text. For continuation, this is their latest DM.
+   */
   prompt: string;
-  /** Prior turns in this DM thread (oldest → newest), excluding the current `prompt` */
-  history?: FutureSelfTurn[];
-  /** How this conversation got started — affects framing of the opening line */
+  /** Prior turns in this DM thread (oldest → newest), excluding `prompt`. */
+  history?: ConversationTurn[];
+  /** How this conversation got started — affects opening line framing. */
   trigger: "slash" | "reaction" | "continuation";
 }
 
 export async function generateFutureSelfResponse(
-  opts: GenerateOpts,
+  opts: GenerateOpts
 ): Promise<string> {
-  console.log("[Futurefolk] future-self response (stub):", {
-    horizon: opts.horizon,
+  const profile = await getVoiceProfile(opts.discordUserId);
+
+  if (!profile) {
+    // Soft-fail: user invoked the bot but never onboarded. Return a brief
+    // message in a plain voice. Don't pretend to be future-self.
+    return "we haven't actually built your voice profile yet. open the futurefolk site and finish onboarding first — then come back and ping me.";
+  }
+
+  const triggerContext = buildTriggerContext({
     trigger: opts.trigger,
-    historyTurns: opts.history?.length ?? 0,
-    promptPreview: opts.prompt.slice(0, 80),
+    topic: opts.trigger === "slash" ? opts.prompt : undefined,
+    reactedMessage: opts.trigger === "reaction" ? opts.prompt : undefined,
   });
 
-  // STUB. The real version is wired in chat 3 (AI integration).
-  // Voice direction lives in .v0/instructions.md and .v0/prompts.md — read both
-  // before replacing this. Do NOT default to "encouraging coach" voice.
-  const horizonLabel = opts.horizon === "1y" ? "a year" : "five years";
+  const systemPrompt = buildSystemPrompt(
+    profile,
+    opts.horizon,
+    triggerContext
+  );
 
-  if (opts.trigger === "continuation") {
-    return `[placeholder, ${horizonLabel} on] still here. you said: "${truncate(opts.prompt, 120)}". the real reply gets wired up in chat 3.`;
+  const messages = buildMessages(opts);
+
+  const first = await generateText({
+    model: MODEL,
+    system: systemPrompt,
+    messages,
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
+  });
+
+  const firstTrip = detectTells(first.text);
+  if (!firstTrip) {
+    return cleanup(first.text);
   }
 
-  if (opts.trigger === "reaction") {
-    return `[placeholder, ${horizonLabel} on] saw the ⏳. context was: "${truncate(opts.prompt, 120)}". this is where future-you actually says something — wired up in chat 3.`;
+  console.warn(
+    "[Futurefolk] tell detected on first generation, regenerating:",
+    firstTrip
+  );
+
+  // Regenerate with an explicit corrective nudge in the messages array. We
+  // do not modify the system prompt — that's the canonical voice direction.
+  const retry = await generateText({
+    model: MODEL,
+    system: systemPrompt,
+    messages: [
+      ...messages,
+      {
+        role: "assistant",
+        content: first.text,
+      },
+      {
+        role: "user",
+        content: `(meta — this is the system, not them.) Your previous response contained: ${firstTrip}. That's exactly the kind of AI tell the system prompt forbids. Rewrite the response in their voice, without that pattern, without explanation, without apology. Just the rewritten reply.`,
+      },
+    ],
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
+  });
+
+  const retryTrip = detectTells(retry.text);
+  if (retryTrip) {
+    // Don't loop. Ship the retry — it's at least one degree better — and log.
+    console.warn(
+      "[Futurefolk] tell still present after one regeneration; shipping anyway:",
+      retryTrip
+    );
   }
 
-  return `[placeholder, ${horizonLabel} on] you wanted to talk about: "${truncate(opts.prompt, 120)}". real reply lives in chat 3.`;
+  return cleanup(retry.text);
 }
 
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+// ---------------------------------------------------------------------------
+// Message construction
+// ---------------------------------------------------------------------------
+
+function buildMessages(opts: GenerateOpts): ModelMessage[] {
+  const out: ModelMessage[] = [];
+
+  for (const turn of opts.history ?? []) {
+    out.push({ role: turn.role, content: turn.content });
+  }
+
+  // The current incoming user prompt becomes the final user message. For
+  // slash/reaction triggers there's no history, so this is a clean start.
+  // For continuation, history already contains prior assistant + user turns.
+  out.push({ role: "user", content: opts.prompt });
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Tell detector
+// ---------------------------------------------------------------------------
+
+interface TellDescription {
+  pattern: RegExp;
+  label: string;
+}
+
+const SUBSTRING_TELLS: TellDescription[] = [
+  {
+    pattern: /\bgreat question\b/i,
+    label: '"great question"',
+  },
+  {
+    pattern: /\bhappy to help\b/i,
+    label: '"happy to help"',
+  },
+  {
+    pattern: /\bhere's the thing[:\u2014]/i,
+    label: '"here\'s the thing:"',
+  },
+  {
+    pattern: /\bas an ai\b/i,
+    label: '"as an AI"',
+  },
+  {
+    pattern: /\bI'?m an? (ai|language model|large language model)\b/i,
+    label: 'self-identifying as an AI ("I\'m an AI/language model")',
+  },
+  {
+    pattern: /\bI cannot (and will not )?(provide|engage|comply)\b/i,
+    label: 'AI-refusal boilerplate ("I cannot provide…")',
+  },
+];
+
+/** Returns a human-readable label of the first tell hit, or null if none. */
+export function detectTells(text: string): string | null {
+  for (const t of SUBSTRING_TELLS) {
+    if (t.pattern.test(text)) return t.label;
+  }
+  if (hasThreeBulletStructure(text)) {
+    return "an unsolicited three-bullet list";
+  }
+  return null;
+}
+
+/**
+ * Three+ consecutive bullet lines starting with -, *, • or numbered 1./2./3.
+ * Conservative: only flags the SaaS-style structured listicle, not a single
+ * incidental dash.
+ */
+function hasThreeBulletStructure(text: string): boolean {
+  const lines = text.split(/\r?\n/);
+  const bulletRe = /^\s*([-*•]|\d+[.)])\s+\S/;
+
+  let run = 0;
+  for (const line of lines) {
+    if (bulletRe.test(line)) {
+      run += 1;
+      if (run >= 3) return true;
+    } else if (line.trim().length > 0) {
+      run = 0;
+    }
+    // Blank lines don't break a run — bulleted lists with blank separators
+    // are still bulleted lists.
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Output cleanup
+// ---------------------------------------------------------------------------
+
+function cleanup(text: string): string {
+  // Trim trailing whitespace and collapse runs of 3+ blank lines to 2.
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

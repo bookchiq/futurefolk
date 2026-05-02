@@ -31,13 +31,20 @@ export default function DeeperQuestionsPage() {
     setExpandedId(expandedId === id ? null : id);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Filter out empty responses
     const filledResponses = Object.fromEntries(
       Object.entries(localResponses).filter(([, v]) => v.trim().length > 0)
     );
+    // Merge into context state and submit in one shot — avoids the
+    // setState-then-read-state race that would otherwise drop these answers.
     updateResponses(filledResponses);
-    submitAll();
+    const result = await submitAll(filledResponses);
+    if (!result.ok) {
+      // Stay on the page so the user knows something failed; the submitAll
+      // helper already logs the reason. We could surface a toast here later.
+      return;
+    }
     router.push("/onboarding/connect");
   };
 

@@ -86,7 +86,45 @@ Per-thread metadata (which horizon started this thread, what the topic was) is s
 
 The ⏳ emoji isn't in the predefined `emoji` map (`thumbs_up`, `heart`, etc.). Match on `event.rawEmoji === "⏳"` inside a catch-all `bot.onReaction` handler instead of trying to use `emoji.custom(...)` for a unicode character.
 
-### Turbopack + discord.js native deps
+## 2026-05-02 — Voice profile + AI integration
+
+The placeholder Discord responses are gone. Real future-self generation is wired through `lib/future-self.ts` → `lib/voice.ts` → AI Gateway → Anthropic Claude. The shape:
+
+- `lib/voice-profile.ts` builds a `VoiceProfile` from raw onboarding responses, persists pending profiles by session cookie (`ff_session`), and promotes them to a Discord-user-keyed row at OAuth callback time.
+- `lib/voice.ts::buildSystemPrompt(profile, horizon, triggerContext)` is the single source of truth for prompt assembly. It uses the **exact** strings from `.v0/prompts.md` — base prompt, two horizon overlays (`1y` / `5y`), and a `{VOICE_PROFILE}` placeholder rendered as a labeled block, plus a `{TRIGGER_CONTEXT}` line. **Do not edit those strings to be friendlier or more "helpful."** They are the product.
+- `lib/future-self.ts::generateFutureSelfResponse` calls `generateText` (not `streamText`) so we can run the tell-detection regex once on the full output and regenerate up to 2 times if it fires. ChatSDK `post()` accepts a string — streaming wasn't necessary, and the regen pass cannot be done mid-stream.
+- `lib/conversation.ts` reads/writes thread history keyed by Discord channel ID (DMs are unique per user). The system prompt is rebuilt each turn from current profile + last ~20 messages.
+
+### Model choice
+
+Default is `anthropic/claude-sonnet-4.5` via the AI Gateway (Anthropic is zero-config). The brief mentioned hypothetical "Opus 4.7" / "Sonnet 4.6" — those don't exist on the gateway as of 2026-05-02. Confirmed via `curl https://ai-gateway.vercel.sh/v1/models | jq '... | startswith("anthropic/")'`. If quality is poor, swap `DEFAULT_MODEL` in `lib/future-self.ts` to `anthropic/claude-opus-4`. Do NOT add a UI toggle for users to pick — the brief explicitly forbids it.
+
+`temperature: 0.85` and `maxOutputTokens: 600`. Higher temp than typical because the voice depends on idiom and texture, not consistency. Don't drop it below 0.7 without testing.
+
+### Tell-detection regex
+
+`STAY_IN_CHARACTER_TELLS` in `lib/future-self.ts` flags: "Great question", "I'd be happy to help", "Here's the thing:", "As an AI / language model / assistant", and any response with three consecutive `- ` bullet lines when the user didn't ask for a list. On a hit we re-call the model with an explicit "you broke character — try again, no preamble, no list" suffix appended to the system prompt. Up to 2 retries; if we still fail, we ship the last attempt rather than block the user. The prompt itself should prevent these — the regex is a cheap safety net.
+
+### Privacy
+
+Conversation content is stored in Postgres (per-channel) and never logged. `lib/future-self.ts` deliberately does NOT pass `experimental_telemetry` or include message bodies in any console.error path. If you're tempted to add observability, redact content first.
+
+### Schema
+
+Three tables created on Neon (project `square-bird-97106862`):
+- `users` — PK `discord_user_id`, JSONB `voice_profile` + `onboarding_responses`.
+- `pending_profiles` — PK `session_id` (cookie). Promoted to `users` on OAuth callback, then deleted.
+- `conversation_messages` — `(channel_id, discord_user_id, horizon, role, content, created_at)` with index on `(channel_id, created_at DESC)`.
+
+### Onboarding → Discord linkage
+
+The flow is: user fills `/onboarding/voice` → `/onboarding/deeper` → submitAll() writes pending profile under a `ff_session` cookie → `/onboarding/connect` → Discord OAuth → callback reads cookie → promotes pending row into `users` keyed by Discord ID. There is a dev fallback in the connect page; that fallback now also calls a server action to create a synthetic Discord ID from the session cookie so dev users can DM the bot with a real backing profile. **Don't ship the dev fallback to production** — it's gated on `NEXT_PUBLIC_DISCORD_CLIENT_ID` being unset.
+
+### submitAll race condition
+
+`OnboardingProvider.submitAll()` now accepts an optional `mergeWith` patch. The deeper-questions page was calling `updateResponses(filled); submitAll();` synchronously, which dropped the latest answers because `setState` hadn't flushed. Pages with a "save and go" button should pass the patch directly: `await submitAll(filled)`.
+
+## 2026-05-02 — Turbopack + discord.js native deps
 
 Next 16's Turbopack bundler tries to resolve `discord.js`'s optional native deps (`zlib-sync`, `bufferutil`, `utf-8-validate`) at build time and fails the build with `Module not found: Can't resolve 'zlib-sync'`. These are server-only and only used for Gateway WebSocket compression — the HTTP Interactions path doesn't need them at all.
 

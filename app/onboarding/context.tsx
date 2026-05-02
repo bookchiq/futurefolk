@@ -2,12 +2,26 @@
 
 import { createContext, useContext, useState, ReactNode } from "react";
 import { OnboardingResponses } from "./types";
+import { submitOnboardingResponses } from "./actions";
 
 interface OnboardingContextType {
   responses: Partial<OnboardingResponses>;
   updateResponse: (key: keyof OnboardingResponses, value: string) => void;
   updateResponses: (updates: Partial<OnboardingResponses>) => void;
-  submitAll: () => void;
+  /**
+   * Persist the current responses as a pending voice profile.
+   *
+   * Optionally takes a `mergeWith` patch — useful when a page wants to save
+   * the latest local edits without waiting for a re-render after
+   * `updateResponses()`. The patch is merged into the in-memory responses
+   * AND included in the submission.
+   *
+   * Returns `{ ok: true }` on success. Caller should only navigate to
+   * /connect if ok.
+   */
+  submitAll: (
+    mergeWith?: Partial<OnboardingResponses>
+  ) => Promise<{ ok: true } | { ok: false; reason: string }>;
 }
 
 const OnboardingContext = createContext<OnboardingContextType | null>(null);
@@ -23,8 +37,22 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     setResponses((prev) => ({ ...prev, ...updates }));
   };
 
-  const submitAll = () => {
-    console.log("[Futurefolk] Onboarding responses submitted:", responses);
+  const submitAll = async (mergeWith?: Partial<OnboardingResponses>) => {
+    // Build the final payload BEFORE state setters that won't have flushed yet.
+    const final: Partial<OnboardingResponses> = mergeWith
+      ? { ...responses, ...mergeWith }
+      : responses;
+    if (mergeWith) {
+      setResponses(final);
+    }
+    const result = await submitOnboardingResponses(final);
+    if (!result.ok) {
+      console.error(
+        "[Futurefolk] failed to save pending voice profile:",
+        result.reason
+      );
+    }
+    return result;
   };
 
   return (
