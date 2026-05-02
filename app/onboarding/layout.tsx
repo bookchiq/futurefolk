@@ -1,6 +1,4 @@
-"use client";
-
-import { OnboardingProvider } from "./context";
+import { OnboardingClientWrapper } from "./client-wrapper";
 
 export default function OnboardingLayout({
   children,
@@ -8,10 +6,10 @@ export default function OnboardingLayout({
   children: React.ReactNode;
 }) {
   return (
-    <OnboardingProvider>
+    <OnboardingClientWrapper>
       <main className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
         <div className="w-full max-w-xl">{children}</div>
       </main>
-    </OnboardingProvider>
+    </OnboardingClientWrapper>
   );
 }
