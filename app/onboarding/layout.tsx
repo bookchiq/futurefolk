@@ -1,3 +1,5 @@
+"use client";
+
 import { OnboardingProvider } from "./context";
 
 export default function OnboardingLayout({
