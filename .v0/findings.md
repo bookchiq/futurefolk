@@ -129,3 +129,28 @@ The flow is: user fills `/onboarding/voice` → `/onboarding/deeper` → submitA
 Next 16's Turbopack bundler tries to resolve `discord.js`'s optional native deps (`zlib-sync`, `bufferutil`, `utf-8-validate`) at build time and fails the build with `Module not found: Can't resolve 'zlib-sync'`. These are server-only and only used for Gateway WebSocket compression — the HTTP Interactions path doesn't need them at all.
 
 Fix: list the ChatSDK + discord.js packages in `serverExternalPackages` in `next.config.ts`. Node will `require()` them at runtime and skip the optional natives gracefully. Do not try to `pnpm add zlib-sync` to "fix" it — that pulls in a native build step that breaks on Vercel's build container and isn't needed anyway on the HTTP-only deployment.
+
+## 2026-05-02 — Discord OAuth flow (real, not scaffolded)
+
+The OAuth flow now actually works end-to-end. Two routes own it:
+
+- `app/api/auth/discord/start/route.ts` — entry point. Reads `DISCORD_CLIENT_ID` (server-only; we deliberately do NOT use `NEXT_PUBLIC_DISCORD_CLIENT_ID` anymore), reads-or-creates the `ff_pending_session` cookie, and 302s to Discord's authorize URL with `state=<sessionId>`. Scope is `identify` only — we don't need anything more for account linking.
+- `app/api/auth/discord/callback/route.ts` — exchange + linkage. Verifies `state === ff_pending_session` cookie BEFORE any network call (CSRF). Then exchanges the code at `https://discord.com/api/oauth2/token`, fetches `https://discord.com/api/users/@me`, and calls `promotePendingToUser(sessionId, user.id, displayName)` from `lib/voice-profile.ts`.
+
+`/onboarding/connect/page.tsx` is now a dumb page: the "Connect Discord" button is a `<Link href="/api/auth/discord/start">`. There is no longer a client-side OAuth URL builder and no dev fallback that synthesizes a Discord ID — the previous fallback was the source of the "button skips straight to /onboarding/done" bug. If `DISCORD_CLIENT_ID` is unset, the start route now redirects back to `/onboarding/connect?error=oauth_not_configured` and the page renders a real error message. To work locally you must set `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET`.
+
+### Cookie name correction
+
+An earlier note in this file calls the cookie `ff_session`. The actual constant is `PENDING_COOKIE = "ff_pending_session"` (see `app/onboarding/actions.ts`, the start route, and the callback). Use that exact name when reading/writing it from any new code.
+
+### Env var precedence
+
+Both the start and callback routes resolve the client id as `DISCORD_CLIENT_ID ?? DISCORD_APP_ID ?? DISCORD_APPLICATION_ID`. ChatSDK's discord adapter still auto-detects `DISCORD_APPLICATION_ID` for the bot itself — same Discord app, same id, two different env var names floating around in this codebase for historical reasons. The OAuth client secret is only ever `DISCORD_CLIENT_SECRET`.
+
+### Error surface
+
+The callback always redirects on failure rather than rendering a JSON error, so the connect page can show something useful. Error codes used: `oauth_error`, `no_code`, `invalid_state`, `oauth_not_configured`, `token_exchange_failed`, `user_fetch_failed`. The connect page maps these to user-facing messages — keep that map in sync if you add new ones.
+
+### Cookie set at /api/auth/discord/start (not just at survey submit)
+
+Previously the cookie was only set inside `submitOnboardingResponses` (the survey server action). If a user somehow lands on `/onboarding/connect` without completing the survey (refresh, deep link), the start route now sets the cookie itself with `randomUUID()` so the state/cookie comparison still works on the way back. The promote step will warn and no-op if there's no matching `pending_profiles` row — that's correct behavior, not a bug to "fix" by inserting a synthetic profile.
