@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
 const ERROR_MESSAGES: Record<string, string> = {
   oauth_not_configured:
@@ -16,11 +17,25 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Got a token from Discord but couldn't read your profile. Try again.",
 };
 
-export default function ConnectDiscordPage() {
-  const router = useRouter();
+// Reads ?error=... from the URL. Lives in its own component so the parent
+// page can wrap it in <Suspense>, which Next.js requires whenever
+// useSearchParams() is used in a statically-prerendered route.
+function OAuthErrorMessage() {
   const searchParams = useSearchParams();
   const errorCode = searchParams.get("error");
   const errorMessage = errorCode ? ERROR_MESSAGES[errorCode] ?? null : null;
+
+  if (!errorMessage) return null;
+
+  return (
+    <p role="alert" className="text-sm text-[#6b1f2e] max-w-md mx-auto">
+      {errorMessage}
+    </p>
+  );
+}
+
+export default function ConnectDiscordPage() {
+  const router = useRouter();
 
   const handleBack = () => {
     router.push("/onboarding/deeper");
@@ -61,14 +76,9 @@ export default function ConnectDiscordPage() {
         We only request permission to identify your account.
       </p>
 
-      {errorMessage && (
-        <p
-          role="alert"
-          className="text-sm text-[#6b1f2e] max-w-md mx-auto"
-        >
-          {errorMessage}
-        </p>
-      )}
+      <Suspense fallback={null}>
+        <OAuthErrorMessage />
+      </Suspense>
 
       {/* Back button */}
       <div className="pt-4">
