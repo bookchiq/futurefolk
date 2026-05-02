@@ -1,13 +1,14 @@
 /**
  * Discord webhook endpoint.
  *
- * Discord delivers two kinds of traffic here:
- *   1. HTTP Interactions  — slash commands, button clicks, the initial PING
- *      verification. ChatSDK's Discord adapter verifies the Ed25519 signature
- *      and routes to the right handler in lib/bot.ts.
- *   2. Forwarded Gateway events — messages and reactions, posted here by our
- *      own Gateway listener (see app/api/discord/gateway/route.ts) which keeps
- *      a WebSocket alive and re-emits events as POSTs to this URL.
+ * Today this only serves HTTP Interactions — slash commands, button clicks,
+ * and the initial PING verification. ChatSDK's Discord adapter verifies the
+ * Ed25519 signature and routes to the right handler in lib/bot.ts.
+ *
+ * The same endpoint is also designed to receive forwarded Gateway events
+ * (regular messages, reactions) once a Gateway worker exists. That worker is
+ * intentionally NOT in this repo on Vercel Hobby — see README.md and
+ * .v0/findings.md for why and what the two real options are.
  *
  * Configure this URL as your "Interactions Endpoint URL" in the Discord
  * Developer Portal: https://<your-domain>/api/webhooks/discord

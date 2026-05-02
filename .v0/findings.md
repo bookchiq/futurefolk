@@ -85,3 +85,9 @@ Per-thread metadata (which horizon started this thread, what the topic was) is s
 ### Hourglass reaction matching
 
 The ⏳ emoji isn't in the predefined `emoji` map (`thumbs_up`, `heart`, etc.). Match on `event.rawEmoji === "⏳"` inside a catch-all `bot.onReaction` handler instead of trying to use `emoji.custom(...)` for a unicode character.
+
+### Turbopack + discord.js native deps
+
+Next 16's Turbopack bundler tries to resolve `discord.js`'s optional native deps (`zlib-sync`, `bufferutil`, `utf-8-validate`) at build time and fails the build with `Module not found: Can't resolve 'zlib-sync'`. These are server-only and only used for Gateway WebSocket compression — the HTTP Interactions path doesn't need them at all.
+
+Fix: list the ChatSDK + discord.js packages in `serverExternalPackages` in `next.config.ts`. Node will `require()` them at runtime and skip the optional natives gracefully. Do not try to `pnpm add zlib-sync` to "fix" it — that pulls in a native build step that breaks on Vercel's build container and isn't needed anyway on the HTTP-only deployment.
