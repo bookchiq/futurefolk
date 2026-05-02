@@ -51,7 +51,23 @@ The bot is wired in `lib/bot.ts` using ChatSDK 4.x with the Discord adapter. Thr
 ### Routes
 
 - `app/api/webhooks/discord/route.ts` — Discord interactions endpoint. Set this URL (`https://<your-domain>/api/webhooks/discord`) as the Interactions Endpoint URL in the Discord Developer Portal. Signature verification is handled by the adapter.
-- `app/api/discord/gateway/route.ts` — Gateway listener invoked by Vercel Cron (`*/9 * * * *`, configured in `vercel.json`). Required for ⏳ reactions and DM messages, which Discord does not deliver via HTTP Interactions.
+
+### What works on Vercel Hobby vs. what doesn't
+
+| Trigger | Transport | Status on Hobby |
+| --- | --- | --- |
+| `/futureself` slash command | HTTP Interactions | **Works.** Lands at the webhook route above. |
+| ⏳ reaction on a message | Gateway WebSocket | **Inert.** Discord does not deliver these via HTTP. |
+| DM thread continuation | Gateway WebSocket | **Inert.** Same reason. |
+
+The handlers for the Gateway-only triggers are still wired up in `lib/bot.ts` — the moment a persistent Gateway listener forwards events into the webhook, they'll fire. They just have nowhere to receive events from in this branch.
+
+Hobby accounts are limited to **one cron run per day**, which makes a `*/9 * * * *` gateway-keepalive route impossible. To light up reactions and DM continuations you have two real options:
+
+1. **Run a small Gateway worker outside Vercel** (Railway, Fly.io, a Raspberry Pi, anything that can hold a WebSocket open). It connects to Discord Gateway, listens for `MESSAGE_CREATE` and `MESSAGE_REACTION_ADD`, and POSTs each event to `https://<your-domain>/api/webhooks/discord`.
+2. **Upgrade to Vercel Pro** and add the cron back: `{ "crons": [{ "path": "/api/discord/gateway", "schedule": "*/9 * * * *" }] }` in `vercel.json`, plus a route that runs `bot.adapters.discord.startGatewayListener()` for ~10 minutes. Pro allows minute-level cron.
+
+Either way, no app code in `lib/bot.ts` needs to change.
 
 ### Registering the `/futureself` slash command
 
@@ -69,9 +85,7 @@ The script reads `DISCORD_BOT_TOKEN` and `DISCORD_APPLICATION_ID` (or `DISCORD_A
 
 ### Required env vars
 
-Already documented in `SETUP.md`. ChatSDK additionally needs:
-
-- `CRON_SECRET` — protects the gateway listener route. Set in Vercel project settings; cron requests include it as `Authorization: Bearer <secret>`.
+Already documented in `SETUP.md`. No additional env vars are needed for the Hobby-only HTTP Interactions flow. If you add a Gateway worker (option 1 above) it will also need `DISCORD_BOT_TOKEN`. If you re-enable the cron-based listener (option 2), set `CRON_SECRET` in Vercel and have the route check `Authorization: Bearer <secret>`.
 
 ### Stubs in this scaffold
 
