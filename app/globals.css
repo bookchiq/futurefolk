@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+@theme {
+  /* Futurefolk palette - warm paper feeling */
+  --color-bg: #faf6ed;
+  --color-bg-subtle: #f5f0e4;
+  --color-ink: #1c1c1e;
+  --color-primary: #2c3e50;
+  --color-primary-hover: #1a2634;
+  --color-accent: #b8860b;
+  --color-accent-hover: #9a7009;
+  --color-muted: #6b6356;
+  --color-border: #d4cfc3;
+  --color-border-subtle: #e8e3d8;
+
+  /* Typography - serif stack */
+  --font-serif: "EB Garamond", "Crimson Pro", Georgia, serif;
+  --font-display: "EB Garamond", Georgia, serif;
+
+  /* Spacing for generous whitespace */
+  --spacing-page: 2rem;
+  --spacing-section: 4rem;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+}
+
+@layer base {
+  html {
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-serif);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+
+  h1 {
+    font-size: 2.25rem;
+  }
+
+  h2 {
+    font-size: 1.75rem;
+  }
+
+  h3 {
+    font-size: 1.375rem;
+  }
+
+  p {
+    margin-bottom: 1em;
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+
+  ::selection {
+    background-color: var(--color-accent);
+    color: var(--color-bg);
+  }
+
+  /* Focus styles */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  /* Textarea styling */
+  textarea {
+    font-family: var(--font-serif);
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+}
