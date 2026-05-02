@@ -40,6 +40,45 @@ prompts/
    - Iterate on your own voice profile to get future-self responses feeling right
    - Pre-record your demo flow at least once before presenting
 
+## Discord bot (ChatSDK)
+
+The bot is wired in `lib/bot.ts` using ChatSDK 4.x with the Discord adapter. Three triggers are live (with placeholder responses — the AI is wired in chat 3):
+
+- `/futureself horizon:<1y|5y> about:<topic>` — slash command, opens DMs with future-you
+- ⏳ reaction on any message in a channel the bot is in — DMs the user with a 1y-future-self response
+- Any reply in a DM thread the bot started — continues the conversation, holding the horizon
+
+### Routes
+
+- `app/api/webhooks/discord/route.ts` — Discord interactions endpoint. Set this URL (`https://<your-domain>/api/webhooks/discord`) as the Interactions Endpoint URL in the Discord Developer Portal. Signature verification is handled by the adapter.
+- `app/api/discord/gateway/route.ts` — Gateway listener invoked by Vercel Cron (`*/9 * * * *`, configured in `vercel.json`). Required for ⏳ reactions and DM messages, which Discord does not deliver via HTTP Interactions.
+
+### Registering the `/futureself` slash command
+
+ChatSDK dispatches slash commands but does not register them with Discord. Run the script once after each change to the command shape:
+
+```bash
+# Register globally (can take up to an hour to propagate)
+pnpm register:commands
+
+# Or register to a single guild for instant updates while iterating
+DISCORD_GUILD_ID=<your-guild-id> pnpm register:commands
+```
+
+The script reads `DISCORD_BOT_TOKEN` and `DISCORD_APPLICATION_ID` (or `DISCORD_APP_ID`) from your local env. Put them in `.env.local` for local invocation; in production they live in Vercel project env vars.
+
+### Required env vars
+
+Already documented in `SETUP.md`. ChatSDK additionally needs:
+
+- `CRON_SECRET` — protects the gateway listener route. Set in Vercel project settings; cron requests include it as `Authorization: Bearer <secret>`.
+
+### Stubs in this scaffold
+
+- `lib/voice-profile.ts` — returns a hardcoded test profile. Real DB lookup wired in chat 3.
+- `lib/future-self.ts` — returns placeholder strings tagged `[placeholder, …]`. Real AI calls wired in chat 3.
+- State is in-memory (`@chat-adapter/state-memory`) — subscriptions are lost on cold start. Swap to `@chat-adapter/state-redis` or `@chat-adapter/state-pg` before any real deploy. See `.v0/findings.md`.
+
 ## A few last reminders
 
 - **The voice IS the project.** Spend time iterating on your voice profile and on what future-self actually says. If chat 3 works but the responses sound generic, that's the bug — keep tweaking the system prompt and your sample messages until it feels right.
