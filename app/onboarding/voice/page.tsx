@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useOnboarding } from "../context";
 import { REQUIRED_QUESTIONS, OnboardingResponses } from "../types";
@@ -10,24 +10,33 @@ export default function VoiceQuestionsPage() {
   const router = useRouter();
   const { responses, updateResponse } = useOnboarding();
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [localValue, setLocalValue] = useState("");
 
   const currentQuestion = REQUIRED_QUESTIONS[currentIndex];
   const totalQuestions = REQUIRED_QUESTIONS.length;
+  const questionId = currentQuestion.id as keyof OnboardingResponses;
 
-  const currentValue =
-    (responses[currentQuestion.id as keyof OnboardingResponses] as string) ||
-    "";
+  // Sync local state with context when question changes
+  useEffect(() => {
+    const savedValue = (responses[questionId] as string) || "";
+    setLocalValue(savedValue);
+  }, [currentIndex, questionId, responses]);
 
   const handleNext = () => {
+    // Save current answer to context before moving
+    updateResponse(questionId, localValue);
+    
     if (currentIndex < totalQuestions - 1) {
       setCurrentIndex(currentIndex + 1);
     } else {
-      // All required questions complete, move to optional deeper questions
       router.push("/onboarding/deeper");
     }
   };
 
   const handleBack = () => {
+    // Save current answer to context before moving
+    updateResponse(questionId, localValue);
+    
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
     } else {
@@ -36,10 +45,10 @@ export default function VoiceQuestionsPage() {
   };
 
   const handleChange = (value: string) => {
-    updateResponse(currentQuestion.id as keyof OnboardingResponses, value);
+    setLocalValue(value);
   };
 
-  const canContinue = currentValue.trim().length > 0;
+  const canContinue = localValue.trim().length > 0;
 
   return (
     <QuestionScreen
@@ -48,7 +57,7 @@ export default function VoiceQuestionsPage() {
       question={currentQuestion.question}
       helperText={"helperText" in currentQuestion ? currentQuestion.helperText : undefined}
       isLarge={"isLarge" in currentQuestion ? currentQuestion.isLarge : false}
-      value={currentValue}
+      value={localValue}
       onChange={handleChange}
       onNext={handleNext}
       onBack={handleBack}
