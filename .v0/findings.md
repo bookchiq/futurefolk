@@ -52,12 +52,21 @@ ChatSDK does not register slash commands with Discord. It only handles dispatch 
 
 While iterating, set `DISCORD_GUILD_ID` so commands register to a single guild — Discord propagates guild commands instantly, but global commands can take up to an hour.
 
-### Two transports, one adapter
+### Two transports, one adapter — and Hobby can only do one
 
-Discord splits its event delivery in a way ChatSDK papers over but you still need to plan for:
+Discord splits its event delivery in a way ChatSDK papers over, but the underlying split matters because Vercel Hobby cannot serve both halves:
 
 - **HTTP Interactions** (slash commands, button clicks, the verification PING) — landed at `app/api/webhooks/discord/route.ts`. Works in pure serverless. The adapter handles Ed25519 signature verification automatically; do not parse `request.body` before passing it to `bot.webhooks.discord(...)`.
-- **Gateway WebSocket** (regular messages, reactions) — kept alive by a Vercel cron at `app/api/discord/gateway/route.ts` running `*/9 * * * *` for 10-minute listens. Each event is forwarded as a POST to the same webhook URL. Without this cron, the ⏳ reaction trigger and DM continuations will silently not fire.
+- **Gateway WebSocket** (regular messages, reactions, DM messages) — needs a process holding a WebSocket open. Originally implemented as a Vercel cron route running `*/9 * * * *` for 10-minute listens, but **Vercel Hobby caps cron at one run per day**, which fails this hard. Cron route and `vercel.json` were removed on 2026-05-02 for that reason.
+
+Current state: `bot.onReaction(...)` and `bot.onSubscribedMessage(...)` handlers are still wired in `lib/bot.ts` — they're correct code, they just have nothing forwarding events into them on Hobby. Slash commands work fine.
+
+Two ways to light up the Gateway-only triggers without touching `lib/bot.ts`:
+
+1. Run a small Gateway worker outside Vercel (Railway/Fly/etc.) that POSTs `MESSAGE_CREATE` + `MESSAGE_REACTION_ADD` events to the same webhook URL.
+2. Upgrade to Vercel Pro and re-add a `*/9 * * * *` cron pointing at a new `app/api/discord/gateway/route.ts` that calls `bot.adapters.discord.startGatewayListener()`.
+
+Do not "solve" this by changing the cron to `0 12 * * *` to satisfy Hobby — a once-a-day 10-minute window means reactions only ever respond if someone happens to react during that window, which is worse than honestly broken.
 
 ### Reading slash command options
 
