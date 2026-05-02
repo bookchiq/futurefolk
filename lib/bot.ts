@@ -11,9 +11,9 @@
  *   3. DM continuation with the bot       → onSubscribedMessage (DM thread is subscribed
  *                                            after the bot's first post)
  *
- * State is in-memory for now (per prompt 02). Swap to @chat-adapter/state-redis or
- * @chat-adapter/state-pg before any real deploy — the in-memory adapter loses
- * subscriptions on every cold start, which kills DM continuation in production.
+ * Conversation memory is persisted to Postgres keyed by Discord channel ID
+ * (lib/conversation.ts). The ChatSDK in-memory state adapter is still used
+ * for subscription state, but message history is durable across cold starts.
  * See .v0/findings.md.
  */
 
@@ -21,11 +21,9 @@ import { Chat } from "chat";
 import { createDiscordAdapter } from "@chat-adapter/discord";
 import { createMemoryState } from "@chat-adapter/state-memory";
 
-import { getVoiceProfile, type Horizon } from "./voice-profile";
-import {
-  generateFutureSelfResponse,
-  type FutureSelfTurn,
-} from "./future-self";
+import { type Horizon } from "./voice-profile";
+import { generateFutureSelfResponse } from "./future-self";
+import { appendMessage, getRecentMessages } from "./conversation";
 
 // Per-thread metadata so DM continuations remember which future-self started the thread.
 // 1y vs 5y must persist across messages (a 5y thread does not turn into a 1y thread mid-conversation).
@@ -56,14 +54,6 @@ export const bot = new Chat<{ discord: typeof discord }, ThreadState>({
 // ---------------------------------------------------------------------------
 // Trigger 1: /futureself slash command
 // ---------------------------------------------------------------------------
-//
-// Discord delivers slash commands via HTTP Interactions. The Discord adapter
-// automatically defers the response (so we satisfy Discord's 3-second ACK
-// requirement) and resolves it once we post.
-//
-// `event.channel.post(...)` is the deferred-response resolution. We do that
-// synchronously with a brief "ok, opening DMs..." line, then DM the user
-// asynchronously with the actual future-self message.
 
 bot.onSlashCommand("/futureself", async (event) => {
   const options = parseSlashOptions(event.raw);
@@ -88,16 +78,12 @@ bot.onSlashCommand("/futureself", async (event) => {
   }
 
   if (schedule) {
-    // Scheduling is intentionally NOT wired here. Workflows handles this in chat 4.
-    // Acknowledge and tell the user we'll handle it later — do NOT setTimeout.
     await event.channel.postEphemeral(
       event.user,
       "Scheduled check-ins are coming. For now, opening DMs with future-you for an immediate conversation.",
       { fallbackToDM: true },
     );
   } else {
-    // Acknowledge in-channel (ephemeral, falls back to DM if Discord doesn't support
-    // ephemeral here). This resolves the deferred interaction.
     await event.channel.postEphemeral(
       event.user,
       `Opening DMs with you, ${horizon === "1y" ? "a year on" : "five years on"}…`,
@@ -105,15 +91,8 @@ bot.onSlashCommand("/futureself", async (event) => {
     );
   }
 
-  // Open the DM thread, generate placeholder reply, post.
-  const profile = await getVoiceProfile(event.user.userId);
-  const reply = await generateFutureSelfResponse({
-    profile,
-    horizon,
-    prompt: about,
-    trigger: "slash",
-  });
-
+  // Open DM, generate, post, persist — in that order so we have the channel
+  // ID by the time we write to the conversation_messages table.
   const dm = await bot.openDM(event.user);
 
   // Subscribe BEFORE posting so the thread is marked subscribed before the
@@ -121,22 +100,28 @@ bot.onSlashCommand("/futureself", async (event) => {
   // onSubscribedMessage below.
   await dm.subscribe();
   await dm.setState({ horizon, topic: about });
+
+  const reply = await generateFutureSelfResponse({
+    discordUserId: event.user.userId,
+    horizon,
+    prompt: about,
+    trigger: "slash",
+  });
+
   await dm.post(reply);
+
+  // Persist user "topic" + assistant reply so future continuations have history.
+  await appendMessage(dm.id, event.user.userId, horizon, "user", about);
+  await appendMessage(dm.id, event.user.userId, horizon, "assistant", reply);
 });
 
 // ---------------------------------------------------------------------------
 // Trigger 2: ⏳ reaction on any message in any channel the bot is in
 // ---------------------------------------------------------------------------
-//
-// Reactions arrive via the Gateway WebSocket, not HTTP Interactions. The
-// gateway listener route keeps a connection alive on a cron schedule and
-// forwards reaction events back to the webhook endpoint, which lands here.
 
 bot.onReaction(async (event) => {
-  // Ignore removals and non-hourglass reactions.
   if (!event.added) return;
   if (event.rawEmoji !== HOURGLASS) return;
-  // Don't react to the bot's own reactions.
   if (event.user.isMe) return;
 
   const reactedText = event.message?.text ?? "";
@@ -146,33 +131,32 @@ bot.onReaction(async (event) => {
   });
 
   const horizon = REACTION_DEFAULT_HORIZON;
-  const profile = await getVoiceProfile(event.user.userId);
-  const reply = await generateFutureSelfResponse({
-    profile,
-    horizon,
-    prompt:
-      reactedText ||
-      "(reacted to a message I couldn't read — context unavailable)",
-    trigger: "reaction",
-  });
+  const promptText =
+    reactedText ||
+    "(reacted to a message I couldn't read — context unavailable)";
 
   const dm = await bot.openDM(event.user);
   await dm.subscribe();
   await dm.setState({ horizon, topic: reactedText.slice(0, 200) });
+
+  const reply = await generateFutureSelfResponse({
+    discordUserId: event.user.userId,
+    horizon,
+    prompt: promptText,
+    trigger: "reaction",
+  });
+
   await dm.post(reply);
+
+  await appendMessage(dm.id, event.user.userId, horizon, "user", promptText);
+  await appendMessage(dm.id, event.user.userId, horizon, "assistant", reply);
 });
 
 // ---------------------------------------------------------------------------
 // Trigger 3: DM continuation
 // ---------------------------------------------------------------------------
-//
-// After the bot's first DM post, the thread is subscribed (see above), so
-// every subsequent user message in that DM lands here. We carry the horizon
-// from thread state and rebuild conversation history from the thread itself
-// — no external store needed.
 
 bot.onSubscribedMessage(async (thread, message) => {
-  // Belt-and-suspenders: only continue conversations in DMs.
   if (!thread.isDM) {
     console.log("[Futurefolk] subscribed message in non-DM thread, ignoring", {
       threadId: thread.id,
@@ -184,16 +168,9 @@ bot.onSubscribedMessage(async (thread, message) => {
   const horizon: Horizon = state.horizon ?? REACTION_DEFAULT_HORIZON;
   const topic = state.topic ?? "";
 
-  // Rebuild thread history (oldest → newest), skipping the current incoming
-  // message — it's passed separately as `prompt`.
-  const history: FutureSelfTurn[] = [];
-  for await (const m of thread.allMessages) {
-    if (m.id === message.id) continue;
-    history.push({
-      role: m.author.isMe ? "assistant" : "user",
-      text: m.text,
-    });
-  }
+  // Pull DB-backed history for this channel. This survives cold starts —
+  // unlike thread.allMessages from the in-memory state adapter.
+  const history = await getRecentMessages(thread.id, 20);
 
   console.log("[Futurefolk] DM continuation", {
     user: message.author.userId,
@@ -201,9 +178,8 @@ bot.onSubscribedMessage(async (thread, message) => {
     historyTurns: history.length,
   });
 
-  const profile = await getVoiceProfile(message.author.userId);
   const reply = await generateFutureSelfResponse({
-    profile,
+    discordUserId: message.author.userId,
     horizon,
     prompt: message.text,
     history,
@@ -212,8 +188,24 @@ bot.onSubscribedMessage(async (thread, message) => {
 
   await thread.post(reply);
 
-  // Topic only needs to be remembered if it isn't set yet (e.g. an edge case
-  // where the thread was subscribed without setState). Keep horizon stable.
+  // Persist this turn (user + assistant) so the next turn sees it.
+  await appendMessage(
+    thread.id,
+    message.author.userId,
+    horizon,
+    "user",
+    message.text,
+  );
+  await appendMessage(
+    thread.id,
+    message.author.userId,
+    horizon,
+    "assistant",
+    reply,
+  );
+
+  // Topic only needs to be remembered if it isn't set yet (edge case where
+  // the thread was subscribed without setState). Keep horizon stable.
   if (!topic) {
     await thread.setState({ horizon, topic: message.text.slice(0, 200) });
   }
