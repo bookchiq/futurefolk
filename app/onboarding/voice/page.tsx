@@ -45,10 +45,12 @@ export default function VoiceQuestionsPage() {
   };
 
   const handleChange = (value: string) => {
+    console.log("[v0] handleChange fired, value length:", value.length);
     setLocalValue(value);
   };
 
   const canContinue = localValue.trim().length > 0;
+  console.log("[v0] render - localValue:", localValue, "canContinue:", canContinue);
 
   return (
     <QuestionScreen
