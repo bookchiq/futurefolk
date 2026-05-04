@@ -84,7 +84,7 @@ export async function generateFutureSelfResponse(
     triggerContext
   );
 
-  const messages = buildMessages(opts);
+  const messages = buildMessages(opts, profile.fewShotPairs);
 
   // Mark the system prompt as an ephemeral cache breakpoint so Anthropic caches
   // the ~1500-token static prefix; reused across the regen path and any DM
@@ -156,8 +156,23 @@ export async function generateFutureSelfResponse(
 // Message construction
 // ---------------------------------------------------------------------------
 
-function buildMessages(opts: GenerateOpts): ModelMessage[] {
+function buildMessages(
+  opts: GenerateOpts,
+  fewShotPairs?: Array<{ userPrompt: string; assistantReply: string }>
+): ModelMessage[] {
   const out: ModelMessage[] = [];
+
+  // Prepend few-shot demonstration pairs (if available) at the very start
+  // of the messages array. The system prompt has a sibling block letting
+  // the model know these are demonstrations, not actual past conversation.
+  // Demonstrated voice patterns are dramatically more reliable than
+  // described ones, especially for register and idiom.
+  if (fewShotPairs && fewShotPairs.length > 0) {
+    for (const pair of fewShotPairs) {
+      out.push({ role: "user", content: pair.userPrompt });
+      out.push({ role: "assistant", content: pair.assistantReply });
+    }
+  }
 
   for (const turn of opts.history ?? []) {
     out.push({ role: turn.role, content: turn.content });
