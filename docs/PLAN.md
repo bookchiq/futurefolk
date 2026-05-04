@@ -33,10 +33,10 @@ Status legend: `[ ]` not started • `[~]` in progress • `[x]` done
 
 ### P2b. Active stylometric extraction at onboarding
 
-- [ ] Add `voiceProfile.styleFeatures` field with concrete extracted patterns
-- [ ] One-time LLM call inside `buildVoiceProfileFromResponses` to populate `styleFeatures`
-- [ ] Inject `styleFeatures` into the system prompt as concrete numbers/patterns
-- [ ] Make extraction idempotent — only re-run when sample messages change
+- [x] Add `voiceProfile.styleFeatures` field with concrete extracted patterns
+- [x] One-time LLM call (in `lib/style-features.ts::extractStyleFeatures`) populates `styleFeatures`. Triggered in the background after onboarding submit via `after()`; existing profiles get a lazy backfill in `getVoiceProfile`.
+- [x] Inject `styleFeatures` into the system prompt as concrete numbers/patterns (`formatStyleFeatures` in `lib/voice.ts`)
+- [x] Idempotent — only runs if `styleFeatures` is missing on the profile
 
 ### P2c. Two-pass voice transfer (experiment)
 
