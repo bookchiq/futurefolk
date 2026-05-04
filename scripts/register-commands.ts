@@ -26,7 +26,26 @@ const APPLICATION_COMMAND_OPTION_TYPE_STRING = 3;
 // Discord interaction option types — we only use STRING here.
 // See: https://discord.com/developers/docs/interactions/application-commands#application-command-object-application-command-option-type
 
-const command = {
+// Installation contexts where the command is available.
+// 0 = GUILD_INSTALL (added to a server)
+// 1 = USER_INSTALL (added to an individual's account; works in any server,
+//                   bot DMs, and group DMs without the bot needing to share
+//                   that server)
+// Including both means the command is usable by guild-install AND
+// user-install audiences. Required for friend testing without inviting the
+// bot to each friend's servers.
+const INTEGRATION_TYPES = [0, 1];
+
+// Interaction contexts where the command can be invoked.
+// 0 = GUILD (server channels)
+// 1 = BOT_DM (the user's DM with this bot)
+// 2 = PRIVATE_CHANNEL (group DMs / private channels via user install)
+const CONTEXTS = [0, 1, 2];
+
+// Base command shape, shared by guild-scoped and global registrations. The
+// integration_types + contexts fields are added only on global registration
+// — Discord's API rejects them on guild-scoped commands.
+const baseCommand = {
   name: "futureself",
   description: "Talk to a future version of yourself.",
   // CHAT_INPUT (slash command in the message composer). Default; included for clarity.
@@ -75,6 +94,14 @@ async function main(): Promise<void> {
 
   const scope = guildId ? `guild ${guildId}` : "globally";
   console.log(`[register-commands] PUT /futureself → ${scope}`);
+
+  // Global registration includes integration_types + contexts so the command
+  // is available in both guild-install and user-install contexts. Guild-
+  // scoped registration omits those fields — Discord rejects them with a
+  // 400 because guild commands are inherently scoped to one guild already.
+  const command = guildId
+    ? baseCommand
+    : { ...baseCommand, integration_types: INTEGRATION_TYPES, contexts: CONTEXTS };
 
   // PUT replaces the full set of commands at this scope with this single
   // command. If you add more slash commands later, include them all here —
