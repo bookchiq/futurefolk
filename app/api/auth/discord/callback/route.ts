@@ -20,14 +20,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-import { promotePendingToUser } from "@/lib/voice-profile";
+import { getUser, promotePendingToUser } from "@/lib/voice-profile";
 
 const PENDING_COOKIE = "ff_pending_session";
+const NEXT_COOKIE = "ff_oauth_next";
 const USER_ID_COOKIE = "ff_user_id";
-// Short-lived; just enough to render the first-run preview on /onboarding/done
-// and any quick retry. Not a session token — the bot is keyed off Discord IDs
-// directly and there's no long-lived signed-in state here.
-const USER_ID_COOKIE_MAX_AGE_SECONDS = 60 * 60; // 1 hour
+// Long enough that returning users can edit their profile without
+// re-authing every visit. Not a real session token — the cookie is just
+// a Discord ID, kept httpOnly + secure + sameSite=lax. /profile prompts
+// re-auth if the cookie has expired.
+const USER_ID_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
+
+function sanitizeNext(value: string | undefined | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith("/")) return null;
+  if (value.startsWith("//")) return null;
+  return value;
+}
 
 interface DiscordTokenResponse {
   access_token: string;
@@ -175,21 +184,43 @@ export async function GET(request: NextRequest) {
   // Clear the pending session cookie — it's single-use.
   cookieStore.delete(PENDING_COOKIE);
 
-  // If there was no pending profile to promote, don't lie to the user with
-  // "Your future selves are ready" — send them back to the connect page with
-  // an explanation so they can complete the survey first.
+  // Read & clear the post-auth target the start route stashed (single-use).
+  const nextTarget = sanitizeNext(cookieStore.get(NEXT_COOKIE)?.value);
+  cookieStore.delete(NEXT_COOKIE);
+
   if (!promoted) {
+    // No pending profile to promote. Two cases:
+    //   1. Returning user re-authenticating (cookie expired, clicked
+    //      "Sign in with Discord" on /profile, etc.). They have a `users`
+    //      row already — set the user_id cookie and send them where they
+    //      were headed.
+    //   2. New user who hit OAuth without completing the survey. Send
+    //      them back to /onboarding/connect with the no_pending error.
+    const existing = await getUser(user.id);
+    if (existing) {
+      const response = NextResponse.redirect(
+        new URL(nextTarget ?? "/profile", request.url)
+      );
+      response.cookies.set(USER_ID_COOKIE, user.id, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: USER_ID_COOKIE_MAX_AGE_SECONDS,
+      });
+      console.log("[Futurefolk] Re-auth for existing Discord user", user.id);
+      return response;
+    }
     return NextResponse.redirect(
       new URL("/onboarding/connect?error=no_pending", request.url)
     );
   }
 
-  // Set a short-lived cookie so /onboarding/done knows which Discord user
-  // this is and can render a first-run preview of their future-self voice.
-  // Set on the response (rather than via cookieStore.set above) so the
-  // browser commits it as part of the redirect.
+  // Promoted: fresh onboarding completion. Set the user_id cookie so
+  // /onboarding/done can render the first-run preview, and so future
+  // /profile visits don't have to re-auth for 30 days.
   const response = NextResponse.redirect(
-    new URL("/onboarding/done", request.url)
+    new URL(nextTarget ?? "/onboarding/done", request.url)
   );
   response.cookies.set(USER_ID_COOKIE, user.id, {
     httpOnly: true,
