@@ -180,6 +180,67 @@ export async function getVoiceProfile(
   return profile;
 }
 
+/**
+ * Combined user record — voice profile + raw survey responses + display
+ * name. Used by `/profile` to render the editor with the user's original
+ * onboarding answers (the rendered profile alone is missing the source
+ * fields the form needs to repopulate).
+ */
+export interface UserRecord {
+  discordUserId: string;
+  displayName: string | null;
+  profile: VoiceProfile;
+  rawResponses: Partial<OnboardingResponses>;
+}
+
+/** Look up the full user record. Returns null if not onboarded. */
+export async function getUser(
+  discordUserId: string
+): Promise<UserRecord | null> {
+  const rows = (await sql`
+    SELECT discord_user_id, display_name, voice_profile, onboarding_responses
+    FROM users
+    WHERE discord_user_id = ${discordUserId}
+    LIMIT 1
+  `) as Array<{
+    discord_user_id: string;
+    display_name: string | null;
+    voice_profile: VoiceProfile;
+    onboarding_responses: Partial<OnboardingResponses>;
+  }>;
+
+  if (rows.length === 0) return null;
+  return {
+    discordUserId: rows[0].discord_user_id,
+    displayName: rows[0].display_name,
+    profile: rows[0].voice_profile,
+    rawResponses: rows[0].onboarding_responses,
+  };
+}
+
+/**
+ * Strip the derived voice-profile fields (`styleFeatures`,
+ * `fewShotPairs`) so that the next `getVoiceProfile` call lazy-rebuilds
+ * them from the (just-edited) sample messages. Called by the
+ * /profile editor's save action when the user changes their
+ * sampleMessages — the existing derived data was extracted from the OLD
+ * messages and is now stale.
+ *
+ * Lazy is the simplest invariant: the worst case is one slow
+ * /futureself per user post-edit. Eager re-extraction in a background
+ * `after()` would be faster but adds complexity (and the lazy path
+ * already exists for backfill).
+ */
+export async function clearDerivedVoiceFields(
+  discordUserId: string
+): Promise<void> {
+  await sql`
+    UPDATE users
+    SET voice_profile = (voice_profile - 'styleFeatures' - 'fewShotPairs')
+    WHERE discord_user_id = ${discordUserId}
+  `;
+}
+
 /** Upsert a user's voice profile keyed by Discord user ID. */
 export async function saveUserProfile(
   discordUserId: string,

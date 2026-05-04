@@ -85,10 +85,11 @@ Status legend: `[ ]` not started • `[~]` in progress • `[x]` done
 
 ## P6. Voice profile editor (`/profile` page)
 
-- [ ] New `/profile` route, gated on Discord OAuth
-- [ ] Editable fields: each VoiceProfile field + sample messages array
-- [ ] Save button updates the `users` row by Discord ID
-- [ ] If P2b is in: trigger stylometric re-extraction on save
+- [x] New `/profile` route, gated by the `ff_user_id` cookie set during OAuth (signs returning users in for 30 days; "Sign in with Discord" affordance if expired)
+- [x] Editable fields: every required + optional onboarding response, including the sample messages textarea (with the live parsed-preview from P5)
+- [x] Save button updates the `users` row by Discord ID via `saveProfileEdit` server action
+- [x] On save, if `sampleMessages` changed, derived fields (`styleFeatures`, `fewShotPairs`) are stripped via `clearDerivedVoiceFields` and lazy-rebuilt by `getVoiceProfile` on next read
+- [x] `/api/auth/discord/start` accepts a `?next=` param (sanitized to same-origin paths only); the callback honors it for both fresh-onboarding and re-auth cases
 
 ## P7. First-run preview on `/onboarding/done`
 
