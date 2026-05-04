@@ -189,6 +189,14 @@ const SUBSTRING_TELLS: TellDescription[] = [
     pattern: /\bI cannot (and will not )?(provide|engage|comply)\b/i,
     label: 'AI-refusal boilerplate ("I cannot provide…")',
   },
+  {
+    pattern: /^(the |that |your |it'?s )[^.!?\n]{0,80}?\bis (genuinely|actually|really|worth|a real|the right)\b/i,
+    label: "verdict opener (e.g. 'The X is genuinely worth doing')",
+  },
+  {
+    pattern: /^(that |that'?s )(a |the )(real|right|tough|interesting|important|hard|big) /i,
+    label: "verdict opener (e.g. 'That's a real concern', 'That's the right call')",
+  },
 ];
 
 /** Returns a human-readable label of the first tell hit, or null if none. */
@@ -199,7 +207,25 @@ export function detectTells(text: string): string | null {
   if (hasThreeBulletStructure(text)) {
     return "an unsolicited three-bullet list";
   }
+  if (hasIntensifierStacking(text)) {
+    return "intensifier stacking (genuinely/truly/actually/really used 3+ times in one response)";
+  }
   return null;
+}
+
+/**
+ * Three or more total uses of validating intensifiers in one response. Each
+ * one in isolation is fine; the stack reads as performance ("I genuinely
+ * think this is actually really worth doing").
+ */
+function hasIntensifierStacking(text: string): boolean {
+  let count = 0;
+  for (const word of ["genuinely", "truly", "actually", "really"]) {
+    const matches = text.match(new RegExp(`\\b${word}\\b`, "gi"));
+    count += matches?.length ?? 0;
+    if (count >= 3) return true;
+  }
+  return false;
 }
 
 /**
@@ -230,9 +256,23 @@ function hasThreeBulletStructure(text: string): boolean {
 // ---------------------------------------------------------------------------
 
 function cleanup(text: string): string {
-  // Trim trailing whitespace and collapse runs of 3+ blank lines to 2.
-  return text
-    .replace(/\r\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  // Normalize line endings, collapse blank-line runs, then strip dash tells.
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
+  return stripDashTells(normalized).trim();
+}
+
+/**
+ * Replace em dashes, en dashes, and double-hyphens with ". " and capitalize
+ * the following letter. Belt-and-suspenders for the prompt rule against them.
+ * Claude's training defaults to em dashes regardless of instructions.
+ */
+function stripDashTells(text: string): string {
+  return text.replace(
+    /\s*[—–]\s*([a-zA-Z])?|\s+--\s+([a-zA-Z])?/g,
+    (_match, c1?: string, c2?: string) => {
+      const next = c1 ?? c2;
+      if (!next) return ". ";
+      return ". " + next.toUpperCase();
+    }
+  );
 }

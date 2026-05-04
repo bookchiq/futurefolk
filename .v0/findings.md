@@ -154,3 +154,13 @@ The callback always redirects on failure rather than rendering a JSON error, so 
 ### Cookie set at /api/auth/discord/start (not just at survey submit)
 
 Previously the cookie was only set inside `submitOnboardingResponses` (the survey server action). If a user somehow lands on `/onboarding/connect` without completing the survey (refresh, deep link), the start route now sets the cookie itself with `randomUUID()` so the state/cookie comparison still works on the way back. The promote step will warn and no-op if there's no matching `pending_profiles` row — that's correct behavior, not a bug to "fix" by inserting a synthetic profile.
+
+## 2026-05-03 — ChatSDK scoped to slash commands; Gateway-side via discord.js
+
+`lib/bot.ts` no longer registers `bot.onSubscribedMessage` or `bot.onReaction` handlers. Those were inert in production (Vercel Hobby can't hold a Gateway WebSocket open), and the prior code suggested they did something. They didn't. Removed alongside the related `dm.subscribe()` and `dm.setState()` calls in the slash command handler, the `ThreadState` interface, and the per-thread metadata constants (`HOURGLASS`, `REACTION_DEFAULT_HORIZON`).
+
+DM continuations and ⏳ reactions are now handled in `scripts/gateway-worker.ts` using `discord.js` directly. The worker reads horizon from the most recent `conversation_messages` row (no thread state needed) and calls `generateFutureSelfResponse`/`appendMessage`/`getRecentMessages` directly.
+
+`@chat-adapter/state-memory` is still required by the `Chat` constructor's type signature (state is non-optional in `ChatOptions`), so it stays as a dependency even though we no longer use subscriptions. Don't try to drop it without first confirming ChatSDK doesn't fall over without it.
+
+Run the worker locally with `pnpm start:worker`. For production, deploy to Railway (or any host that can hold a WebSocket open) — see PLAN.md P3c.

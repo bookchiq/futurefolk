@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "register:commands": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/register-commands.ts"
+    "register:commands": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/register-commands.ts",
+    "start:worker": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/gateway-worker.ts"
   },
   "keywords": [],
   "author": "",
@@ -23,6 +24,7 @@
     "chat": "^4.27.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "discord.js": "14.26.4",
     "lucide-react": "^1.14.0",
     "next": "^16.2.4",
     "react": "^19.2.5",

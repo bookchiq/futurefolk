@@ -1,12 +1,14 @@
 /**
  * DM conversation memory.
  *
- * Each DM thread has a stable Discord channel ID. We persist messages keyed
- * by that channel ID so conversation history survives cold starts and the
- * eventual switch to a different state adapter.
+ * Rows are keyed by the raw Discord channel ID (a numeric string like
+ * "1500227847134285894"). Both the slash command path (`lib/bot.ts`, via
+ * `dm.channelId`) and the gateway worker (`scripts/gateway-worker.ts`, via
+ * `msg.channelId` / `dm.id` from discord.js) write under the same key, so
+ * either path can read the other's history back.
  *
- * The in-memory ChatSDK state adapter would otherwise lose subscription
- * (and message) state on every cold start — see .v0/findings.md.
+ * Do NOT use ChatSDK's `Thread.id` here — that's the encoded form
+ * `"discord:@me:<channelId>"` and would diverge from the worker's keys.
  */
 
 import { sql } from "./db";
