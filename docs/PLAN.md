@@ -99,11 +99,13 @@ Status legend: `[ ]` not started • `[~]` in progress • `[x]` done
 
 ## P8. Scheduled check-ins via Workflow SDK
 
-- [ ] Read `https://workflow-sdk.dev` and `https://vercel.com/docs/workflows`
-- [ ] Wire the existing `schedule:` parameter on `/futureself` to a workflow that sleeps until the date
-- [ ] On wake: load profile + history, generate a check-in, post to user's DM
-- [ ] Allow future-self mid-conversation to propose a check-in (button → schedules workflow)
-- [ ] `/profile` page: "scheduled check-ins" section with pending workflows + cancel button
+- [x] Read `node_modules/workflow/docs` (bundled API reference) — used `sleep(new Date)`, `start()`, `getRun().cancel()`
+- [x] Wire the existing `schedule:` parameter on `/futureself` to a workflow that sleeps until the date
+- [x] On wake: load profile, generate a `"scheduled"`-trigger check-in, post via raw Discord REST API, persist the assistant turn so DM continuations thread cleanly
+- [x] New `scheduled_check_ins` table (DDL in `docs/OPERATIONS.md`); workflow re-checks the row's status on wake to honor cancellations
+- [x] `cancelScheduledCheckIn` helper that marks the row + returns the `workflow_run_id` for `getRun(id).cancel()` cleanup
+- [ ] (Deferred) `/profile` page section: list pending check-ins + cancel button. Helper exists; just needs UI wiring.
+- [ ] (Deferred) Future-self mid-conversation proposing a check-in — needs a Discord button interaction handler, more involved.
 
 ---
 

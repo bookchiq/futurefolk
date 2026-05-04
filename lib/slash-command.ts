@@ -24,6 +24,8 @@ import { Chat } from "chat";
 import { createDiscordAdapter } from "@chat-adapter/discord";
 import { createMemoryState } from "@chat-adapter/state-memory";
 
+import { start } from "workflow/api";
+
 import { type Horizon } from "./voice-profile";
 import { generateFutureSelfResponse } from "./future-self";
 import {
@@ -31,6 +33,11 @@ import {
   isDuplicateUserMessage,
   isRateLimited,
 } from "./conversation";
+import {
+  createScheduledCheckIn,
+  setCheckInWorkflowRunId,
+} from "./scheduled-check-ins";
+import { scheduledCheckInWorkflow } from "@/workflows/scheduled-check-in";
 import { VERSION } from "./version";
 
 // Logged once per cold start so deploy drift between Vercel + Railway is
@@ -93,18 +100,20 @@ bot.onSlashCommand("/futureself", async (event) => {
   }
 
   if (schedule) {
-    await event.channel.postEphemeral(
-      event.user,
-      "Scheduled check-ins are coming. For now, opening DMs with future-you for an immediate conversation.",
-      { fallbackToDM: true },
-    );
-  } else {
-    await event.channel.postEphemeral(
-      event.user,
-      `Opening DMs with you, ${horizon === "1y" ? "a year on" : "five years on"}…`,
-      { fallbackToDM: true },
-    );
+    await handleScheduledInvocation({
+      event,
+      horizon,
+      about,
+      schedule,
+    });
+    return;
   }
+
+  await event.channel.postEphemeral(
+    event.user,
+    `Opening DMs with you, ${horizon === "1y" ? "a year on" : "five years on"}…`,
+    { fallbackToDM: true },
+  );
 
   // Open DM, persist user turn, generate, post, persist assistant turn.
   // Conversation history is keyed by the raw Discord channel ID so the
@@ -137,6 +146,133 @@ bot.onSlashCommand("/futureself", async (event) => {
 
   await appendMessage(channelId, event.user.userId, horizon, "assistant", reply);
 });
+
+// ---------------------------------------------------------------------------
+// Scheduled check-in path
+// ---------------------------------------------------------------------------
+
+const MAX_SCHEDULE_HORIZON_DAYS = 365;
+const MIN_SCHEDULE_FUTURE_MS = 60_000; // must be at least a minute in the future
+type SlashEvent = Parameters<Parameters<typeof bot.onSlashCommand>[1]>[0];
+
+async function handleScheduledInvocation(args: {
+  event: SlashEvent;
+  horizon: Horizon;
+  about: string;
+  schedule: string;
+}): Promise<void> {
+  const { event, horizon, about, schedule } = args;
+
+  const scheduledFor = parseScheduleInput(schedule);
+  if (!scheduledFor) {
+    await event.channel.postEphemeral(
+      event.user,
+      `Couldn't parse \`schedule:\`. Use a future ISO date like \`2026-11-02\` or \`2026-11-02T15:00:00Z\`.`,
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
+  const now = Date.now();
+  if (scheduledFor.getTime() - now < MIN_SCHEDULE_FUTURE_MS) {
+    await event.channel.postEphemeral(
+      event.user,
+      "That schedule is in the past (or right now). Pick a date at least a minute out.",
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
+  const maxFuture = now + MAX_SCHEDULE_HORIZON_DAYS * 24 * 60 * 60 * 1000;
+  if (scheduledFor.getTime() > maxFuture) {
+    await event.channel.postEphemeral(
+      event.user,
+      `That's more than a year out. Try a date within ${MAX_SCHEDULE_HORIZON_DAYS} days.`,
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
+  let checkInId: number;
+  try {
+    checkInId = await createScheduledCheckIn({
+      discordUserId: event.user.userId,
+      horizon,
+      topic: about,
+      scheduledFor,
+    });
+  } catch (err) {
+    console.error("[Futurefolk] /futureself: createScheduledCheckIn failed", err);
+    await event.channel.postEphemeral(
+      event.user,
+      "Couldn't save the schedule. Try again in a moment.",
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
+  try {
+    const run = await start(scheduledCheckInWorkflow, [
+      {
+        checkInId,
+        discordUserId: event.user.userId,
+        horizon,
+        topic: about,
+        scheduledForIso: scheduledFor.toISOString(),
+      },
+    ]);
+    // Best-effort: link the row to its workflow run so /profile can cancel
+    // it later. If this update fails, the row is still in 'pending' and the
+    // workflow runs as scheduled — we just lose the cancel-from-UI ability
+    // for this one row.
+    try {
+      await setCheckInWorkflowRunId(checkInId, run.runId);
+    } catch (err) {
+      console.error(
+        "[Futurefolk] /futureself: setCheckInWorkflowRunId failed",
+        err,
+      );
+    }
+  } catch (err) {
+    console.error("[Futurefolk] /futureself: start workflow failed", err);
+    await event.channel.postEphemeral(
+      event.user,
+      "Couldn't start the scheduled workflow. Try again in a moment.",
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
+  const horizonLabel = horizon === "1y" ? "a year on" : "five years on";
+  await event.channel.postEphemeral(
+    event.user,
+    `Scheduled. You, ${horizonLabel}, will DM you on ${formatScheduledDate(scheduledFor)} about: ${about}`,
+    { fallbackToDM: true },
+  );
+}
+
+function parseScheduleInput(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  // Accept either a bare YYYY-MM-DD (interpreted as midnight UTC, the
+  // user's expected "morning of that day" semantics in most time zones —
+  // the alternative is to pin to local time, but slash commands have no
+  // tz info on the server) or a full ISO 8601 timestamp.
+  const isoDateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  const candidate = isoDateOnly.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
+  const parsed = new Date(candidate);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function formatScheduledDate(date: Date): string {
+  // Use UTC so the message doesn't lie about the time zone we don't know.
+  return date
+    .toISOString()
+    .replace("T", " ")
+    .replace(/:\d{2}\.\d{3}Z$/, " UTC")
+    .replace(/Z$/, " UTC");
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

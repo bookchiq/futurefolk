@@ -70,7 +70,7 @@ const baseCommand = {
     {
       name: "schedule",
       description:
-        "Optional: ISO date for a scheduled check-in (e.g. 2026-11-02). Wired up later.",
+        "Optional: ISO date or datetime to receive a check-in (e.g. 2026-11-02). Future-you will DM you on that day.",
       type: APPLICATION_COMMAND_OPTION_TYPE_STRING,
       required: false,
     },
