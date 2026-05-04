@@ -195,11 +195,107 @@ function formatVoiceProfile(profile: VoiceProfile): string {
     }
   }
 
+  const styleBlock = formatStyleFeatures(profile.styleFeatures);
+  if (styleBlock) {
+    parts.push(styleBlock);
+  }
+
   if (parts.length === 0) {
     return "(No voice profile available — fall back to a plain, undecorated voice. Keep it short.)";
   }
 
   return parts.join("\n\n");
+}
+
+/**
+ * Render the structured style features as a concrete-numbers block. Reading
+ * order is "messages above → features below" so the model sees the corpus
+ * first then the structured distillation.
+ */
+function formatStyleFeatures(
+  features: VoiceProfile["styleFeatures"]
+): string | null {
+  if (!features) return null;
+
+  const lines: string[] = [];
+
+  lines.push(
+    `STYLOMETRIC FEATURES extracted from their messages — match these as quantitative anchors, not as a checklist:`
+  );
+
+  lines.push(
+    `- Average sentence length: ${features.averageSentenceLength} words. ` +
+      `Average message length: ${features.averageMessageLength} words. ` +
+      `Natural variation around these targets is fine; what matters is the typical rhythm.`
+  );
+
+  const lcDescriptor =
+    features.lowercaseRatio >= 0.7
+      ? "they overwhelmingly write in lowercase, including at the start of messages and after periods"
+      : features.lowercaseRatio >= 0.3
+        ? "they mix lowercase and capitalized starts; not consistently either way"
+        : "they capitalize the start of sentences and messages reliably";
+  const propNounsDescriptor = features.capitalizesProperNouns
+    ? "Proper nouns (names, places, brands) ARE capitalized even when sentences otherwise aren't."
+    : "They do not capitalize proper nouns either — everything is lowercase.";
+  lines.push(
+    `- Capitalization: ${lcDescriptor} (lowercase ratio ${features.lowercaseRatio.toFixed(2)}). ${propNounsDescriptor}`
+  );
+
+  if (features.commonOpeners.length > 0) {
+    const openers = features.commonOpeners
+      .map((o) => `"${scrubForPromptInterpolation(o)}"`)
+      .join(", ");
+    lines.push(
+      `- Common openers: ${openers}. Use one of these naturally when an opener fits, but don't force it on every reply.`
+    );
+  }
+
+  if (features.hedgeWords.length > 0) {
+    const hedges = features.hedgeWords
+      .map((h) => `"${scrubForPromptInterpolation(h)}"`)
+      .join(", ");
+    lines.push(
+      `- Their hedge vocabulary: ${hedges}. Future-self uses these LESS than present-self does (per the delta) — but when hedging, reach for these specific words rather than generic ones.`
+    );
+  }
+
+  if (features.signaturePhrases.length > 0) {
+    const sigs = features.signaturePhrases
+      .map((s) => `"${scrubForPromptInterpolation(s)}"`)
+      .join(", ");
+    lines.push(
+      `- Signature phrases that recur in their voice: ${sigs}. Drop one in occasionally where it fits — sparingly, never as filler.`
+    );
+  }
+
+  const punctDescriptor: Record<typeof features.punctuationStyle, string> = {
+    formal:
+      "Full sentences with periods and commas in the right places. Match this — don't go casual.",
+    casual:
+      "Run-on sentences, missing commas, frequent ellipses. Match this — don't tighten up the punctuation.",
+    minimal:
+      "Very few periods; sentences run together with comma chains or line breaks. Match this — sparse punctuation is the style.",
+  };
+  lines.push(`- Punctuation: ${features.punctuationStyle}. ${punctDescriptor[features.punctuationStyle]}`);
+
+  const emojiDescriptor: Record<typeof features.emojiFrequency, string> = {
+    never: "They don't use emoji. Don't add any.",
+    rare:
+      "They use emoji rarely (~1 per several messages). At most one emoji in your reply, and only if it really fits.",
+    sometimes:
+      "They use emoji sometimes. One emoji per reply is fine; don't pile them.",
+    often:
+      "They use emoji often. Feel free to include one or two where natural.",
+  };
+  lines.push(`- Emoji frequency: ${features.emojiFrequency}. ${emojiDescriptor[features.emojiFrequency]}`);
+
+  const styleNotes = scrubForPromptInterpolation(features.styleNotes);
+  if (styleNotes) {
+    lines.push(`- Other stylistic quirks to internalize: ${styleNotes}`);
+  }
+
+  return lines.join("\n");
 }
 
 function formatOnboardingContext(profile: VoiceProfile): string {

@@ -12,6 +12,7 @@
 
 import { sql } from "./db";
 import type { OnboardingResponses } from "@/app/onboarding/types";
+import { extractStyleFeatures, type StyleFeatures } from "./style-features";
 
 export type Horizon = "1y" | "5y";
 
@@ -25,6 +26,12 @@ export interface VoiceProfile {
   seasonOfLife: string;
   /** Optional deeper questions the user filled in (id → answer) */
   optional: Record<string, string>;
+  /**
+   * Concrete stylistic features extracted from `sampleMessages` via one-shot
+   * LLM analysis. Optional for backward compatibility — pre-extraction
+   * profiles get filled in lazily by `getVoiceProfile` on first read.
+   */
+  styleFeatures?: StyleFeatures;
 }
 
 // Required keys mapped from OnboardingResponses to VoiceProfile fields. Kept
@@ -93,7 +100,17 @@ function splitSampleMessages(blob: string): string[] {
   return [trimmed];
 }
 
-/** Look up the saved voice profile for a Discord user. Returns null if not onboarded. */
+/**
+ * Look up the saved voice profile for a Discord user. Returns null if not
+ * onboarded.
+ *
+ * Lazy backfill: if the stored profile pre-dates stylometric extraction
+ * (no `styleFeatures`) and there are sample messages to analyze, run the
+ * extractor once and persist the result. The first call per user that
+ * triggers backfill pays a one-time ~5-15s LLM cost; subsequent reads are
+ * back to a single SELECT. New profiles created after onboarding's
+ * extraction wiring will already have the features and skip this branch.
+ */
 export async function getVoiceProfile(
   discordUserId: string
 ): Promise<VoiceProfile | null> {
@@ -105,7 +122,39 @@ export async function getVoiceProfile(
   `) as Array<{ voice_profile: VoiceProfile }>;
 
   if (rows.length === 0) return null;
-  return rows[0].voice_profile;
+  const profile = rows[0].voice_profile;
+
+  if (!profile.styleFeatures && profile.sampleMessages.length > 0) {
+    try {
+      const features = await extractStyleFeatures(profile.sampleMessages);
+      if (features) {
+        profile.styleFeatures = features;
+        await sql`
+          UPDATE users
+          SET voice_profile = jsonb_set(
+            voice_profile,
+            '{styleFeatures}',
+            ${JSON.stringify(features)}::jsonb,
+            true
+          )
+          WHERE discord_user_id = ${discordUserId}
+        `;
+        console.log(
+          "[Futurefolk] backfilled styleFeatures for",
+          discordUserId
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[Futurefolk] lazy styleFeatures extract/persist failed:",
+        err
+      );
+      // Fall through with profile sans features — generation still works,
+      // just without the structured-style hints.
+    }
+  }
+
+  return profile;
 }
 
 /** Upsert a user's voice profile keyed by Discord user ID. */
