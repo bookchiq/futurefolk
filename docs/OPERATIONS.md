@@ -71,3 +71,17 @@ Set the same value in Vercel project env AND Railway service env. Otherwise the 
 Both processes need: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `DISCORD_BOT_TOKEN`.
 Vercel additionally needs: `DISCORD_APP_ID` (or `DISCORD_APPLICATION_ID`), `DISCORD_PUBLIC_KEY`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `NEXT_PUBLIC_BASE_URL`.
 Railway worker doesn't need the OAuth/public-key vars (it doesn't serve HTTP).
+
+## Railway-specific config
+
+`railway.json` at the repo root pins Railway's build + start commands so the worker doesn't accidentally try to run the Next.js build. Without this file, Railway's Railpack auto-detects `pnpm run build` and `pnpm run start` from `package.json` (both pointed at Next.js because Vercel uses them) and the deploy fails.
+
+The file declares:
+
+- **Build command:** a no-op `echo`. The worker is just `tsx scripts/gateway-worker.ts` — there's no compile step. Skipping the auto-detected `next build` saves ~10s of build time and avoids the `DATABASE_URL is not set` import-time crash that `next build` triggers when collecting page data.
+- **Start command:** `pnpm start:worker` (the npm script that runs the worker via tsx).
+- **Restart policy:** `ON_FAILURE`, max 10 retries.
+
+If you change Railway's UI overrides for Build/Start commands, the file's values take precedence on the next deploy. Either edit `railway.json` directly or rely on it being correct.
+
+If you ever provision a new Railway environment for this repo, the config travels with the code — no UI configuration is needed beyond setting the env vars.
