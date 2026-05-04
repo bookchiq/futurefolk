@@ -24,6 +24,7 @@ import {
   savePendingProfile,
 } from "@/lib/voice-profile";
 import { extractStyleFeatures } from "@/lib/style-features";
+import { extractFewShotPairs } from "@/lib/few-shot-pairs";
 import { generateFutureSelfResponse } from "@/lib/future-self";
 import { sql } from "@/lib/db";
 import type { OnboardingResponses } from "./types";
@@ -70,42 +71,70 @@ export async function submitOnboardingResponses(
 
   await savePendingProfile(sessionId, profile, responses);
 
-  // Style-feature extraction runs in the background. The survey-submit
-  // response returns immediately. By the time the user clicks through
-  // Discord OAuth, the features are usually persisted on `pending_profiles`
-  // and get copied during promotion. If OAuth wins the race, the lazy
-  // backfill in `getVoiceProfile` handles it.
+  // Stylometric extraction + few-shot pair generation run in the
+  // background via `after()`. The survey-submit response returns
+  // immediately. By the time the user clicks through Discord OAuth, both
+  // are usually persisted on `pending_profiles` and get copied during
+  // promotion. If OAuth wins the race, the lazy backfills in
+  // `getVoiceProfile` handle it.
+  //
+  // Order: style features FIRST so few-shot generation can read them off
+  // the in-memory profile object when building its meta prompt. Each step
+  // is wrapped independently so a failure in features doesn't block pairs.
   if (profile.sampleMessages.length > 0) {
     const sessionIdForBackground = sessionId;
     after(async () => {
       try {
         const features = await extractStyleFeatures(profile.sampleMessages);
-        if (!features) return;
-        // Update the pending row if it still exists. If promotion already
-        // happened (sessionId no longer in pending_profiles), update the
-        // promoted users row instead. Try-pending-first then users-fallback
-        // means we don't need a lookup before the update.
-        const updated = (await sql`
-          UPDATE pending_profiles
-          SET voice_profile = jsonb_set(
-            voice_profile,
-            '{styleFeatures}',
-            ${JSON.stringify(features)}::jsonb,
-            true
-          )
-          WHERE session_id = ${sessionIdForBackground}
-          RETURNING session_id
-        `) as Array<{ session_id: string }>;
-        if (updated.length === 0) {
-          // Pending row already promoted/deleted. Lazy backfill on first
-          // /futureself will catch this case.
-          console.log(
-            "[Futurefolk] background styleFeatures: pending row already gone, deferring to lazy backfill"
-          );
+        if (features) {
+          profile.styleFeatures = features;
+          const updated = (await sql`
+            UPDATE pending_profiles
+            SET voice_profile = jsonb_set(
+              voice_profile,
+              '{styleFeatures}',
+              ${JSON.stringify(features)}::jsonb,
+              true
+            )
+            WHERE session_id = ${sessionIdForBackground}
+            RETURNING session_id
+          `) as Array<{ session_id: string }>;
+          if (updated.length === 0) {
+            console.log(
+              "[Futurefolk] background styleFeatures: pending row already gone, deferring to lazy backfill"
+            );
+          }
         }
       } catch (err) {
         console.error(
           "[Futurefolk] background styleFeatures extraction failed:",
+          err
+        );
+      }
+
+      try {
+        const pairs = await extractFewShotPairs(profile);
+        if (pairs && pairs.length > 0) {
+          const updated = (await sql`
+            UPDATE pending_profiles
+            SET voice_profile = jsonb_set(
+              voice_profile,
+              '{fewShotPairs}',
+              ${JSON.stringify(pairs)}::jsonb,
+              true
+            )
+            WHERE session_id = ${sessionIdForBackground}
+            RETURNING session_id
+          `) as Array<{ session_id: string }>;
+          if (updated.length === 0) {
+            console.log(
+              "[Futurefolk] background fewShotPairs: pending row already gone, deferring to lazy backfill"
+            );
+          }
+        }
+      } catch (err) {
+        console.error(
+          "[Futurefolk] background fewShotPairs extraction failed:",
           err
         );
       }

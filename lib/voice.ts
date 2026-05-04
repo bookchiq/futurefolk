@@ -200,6 +200,15 @@ function formatVoiceProfile(profile: VoiceProfile): string {
     parts.push(styleBlock);
   }
 
+  // Demo-pair preamble: when few-shot pairs are present in `messages`, tell
+  // the model what they are. Without this hint the model can think the
+  // demonstration exchanges are real past conversation it should reference.
+  if (profile.fewShotPairs && profile.fewShotPairs.length > 0) {
+    parts.push(
+      `THE FIRST ${profile.fewShotPairs.length} EXCHANGES IN THE MESSAGE HISTORY ARE DEMONSTRATION EXAMPLES of the target voice — exact register, idiom, length, and rhythm to match. They are NOT real past conversation. Do not reference them. Do not say things like "you said earlier" about them. Use them only as demonstrations of what the assistant turn should sound like in their voice.`
+    );
+  }
+
   if (parts.length === 0) {
     return "(No voice profile available — fall back to a plain, undecorated voice. Keep it short.)";
   }

@@ -26,10 +26,10 @@ Status legend: `[ ]` not started • `[~]` in progress • `[x]` done
 
 ### P2a. Few-shot dialogue pairs in the messages array
 
-- [ ] Define `voiceProfile.fewShotPairs: Array<{user: string, assistant: string}>` on the schema
-- [ ] Prepend few-shot pairs as `role: "user"` / `role: "assistant"` entries in `lib/future-self.ts::buildMessages`
-- [ ] Seed ~3 hand-written pairs in Sarah's profile for demo validation
-- [ ] Document the rule: few-shot pairs are demonstrations, not content to mirror
+- [x] Define `VoiceProfile.fewShotPairs: FewShotPair[]` on the schema (in `lib/few-shot-pairs.ts`)
+- [x] Prepend few-shot pairs as `role: "user"` / `role: "assistant"` entries in `lib/future-self.ts::buildMessages`
+- [x] Generate per-user via `extractFewShotPairs` (uses the runtime system prompt as meta-context, including stylometric features). Backfilled lazily in `getVoiceProfile` for existing profiles; extracted in the onboarding `after()` block for new ones.
+- [x] System-prompt note tells the model the leading message pairs are demonstrations, not actual past conversation
 
 ### P2b. Active stylometric extraction at onboarding
 

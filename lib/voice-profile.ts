@@ -13,6 +13,7 @@
 import { sql } from "./db";
 import type { OnboardingResponses } from "@/app/onboarding/types";
 import { extractStyleFeatures, type StyleFeatures } from "./style-features";
+import { extractFewShotPairs, type FewShotPair } from "./few-shot-pairs";
 
 export type Horizon = "1y" | "5y";
 
@@ -32,6 +33,13 @@ export interface VoiceProfile {
    * profiles get filled in lazily by `getVoiceProfile` on first read.
    */
   styleFeatures?: StyleFeatures;
+  /**
+   * Few-shot demonstration pairs in the user's voice. Generated once at
+   * onboarding (or lazy-backfilled on first read) and prepended to the
+   * messages array at runtime in `lib/future-self.ts::buildMessages`.
+   * Optional for backward compatibility.
+   */
+  fewShotPairs?: FewShotPair[];
 }
 
 // Required keys mapped from OnboardingResponses to VoiceProfile fields. Kept
@@ -104,12 +112,14 @@ function splitSampleMessages(blob: string): string[] {
  * Look up the saved voice profile for a Discord user. Returns null if not
  * onboarded.
  *
- * Lazy backfill: if the stored profile pre-dates stylometric extraction
- * (no `styleFeatures`) and there are sample messages to analyze, run the
- * extractor once and persist the result. The first call per user that
- * triggers backfill pays a one-time ~5-15s LLM cost; subsequent reads are
- * back to a single SELECT. New profiles created after onboarding's
- * extraction wiring will already have the features and skip this branch.
+ * Lazy backfill: if the stored profile pre-dates stylometric extraction or
+ * few-shot pair generation, run the missing extractors once and persist
+ * the result. The first call per user that triggers backfill pays a
+ * one-time ~5-30s LLM cost; subsequent reads are back to a single SELECT.
+ *
+ * Order matters: stylometric features feed into the few-shot generator
+ * (it builds the runtime system prompt, which includes the features).
+ * Run features first so few-shot has them.
  */
 export async function getVoiceProfile(
   discordUserId: string
@@ -149,8 +159,37 @@ export async function getVoiceProfile(
         "[Futurefolk] lazy styleFeatures extract/persist failed:",
         err
       );
-      // Fall through with profile sans features — generation still works,
-      // just without the structured-style hints.
+      // Fall through — few-shot can still attempt without features.
+    }
+  }
+
+  if (!profile.fewShotPairs && profile.sampleMessages.length > 0) {
+    try {
+      const pairs = await extractFewShotPairs(profile);
+      if (pairs && pairs.length > 0) {
+        profile.fewShotPairs = pairs;
+        await sql`
+          UPDATE users
+          SET voice_profile = jsonb_set(
+            voice_profile,
+            '{fewShotPairs}',
+            ${JSON.stringify(pairs)}::jsonb,
+            true
+          )
+          WHERE discord_user_id = ${discordUserId}
+        `;
+        console.log(
+          "[Futurefolk] backfilled fewShotPairs for",
+          discordUserId
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[Futurefolk] lazy fewShotPairs extract/persist failed:",
+        err
+      );
+      // Fall through with profile sans pairs — generation still works,
+      // just without the demonstration examples.
     }
   }
 
