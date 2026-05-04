@@ -4,7 +4,7 @@ description: Both queries filter on discord_user_id + role + created_at. No matc
 type: code-review
 issue_id: 022
 priority: p2
-status: pending
+status: complete
 tags: [code-review, performance, database]
 ---
 
@@ -47,7 +47,15 @@ Run the CREATE INDEX in Neon. No code change needed. Add a migration file for do
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Sarah applied the partial index manually on Neon after PR #10 merged. The recommended SQL from this todo:
+
+```sql
+CREATE INDEX CONCURRENTLY conversation_messages_user_recent_idx
+  ON conversation_messages (discord_user_id, created_at DESC)
+  WHERE role = 'user';
+```
+
+Now in place. `isRateLimited` and the user-id leg of `isDuplicateUserMessage` should both be served by index lookup, not seq scan. Verification SQL is documented in `docs/OPERATIONS.md`.
 
 ## Resources
 

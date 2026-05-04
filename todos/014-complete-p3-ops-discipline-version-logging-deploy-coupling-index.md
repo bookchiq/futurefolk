@@ -4,7 +4,7 @@ description: Both processes (Vercel + Railway) share schema and core lib code bu
 type: code-review
 issue_id: 014
 priority: p3
-status: pending
+status: complete
 tags: [code-review, operations, observability]
 ---
 
@@ -75,7 +75,13 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — All three parts addressed.
+
+- **14a (deploy coupling)**: New `docs/OPERATIONS.md` documents the dual-process coupling rule, schema-additive-only discipline, version-log verification, and the env-var matrix.
+- **14b (version logging)**: New `lib/version.ts` exports `VERSION` from `VERCEL_GIT_COMMIT_SHA ?? RAILWAY_GIT_COMMIT_SHA ?? "unknown"`. Worker logs version on connect (`[gateway-worker] connected as ... (version=…)`); slash-command module logs once at module load (first invocation per cold start: `[Futurefolk] slash-command module loaded (version=…)`).
+- **14c (index verification)**: Sarah ran the SQL on Neon. Both indexes are now in place per todo 022 and the verification SQL in this todo. Confirmed via merge of PR #10 + Sarah's manual Neon work.
+
+If Vercel and Railway ever drift onto different commits, the version log lines will diverge and an operator can see the gap in production logs.
 
 ## Resources
 

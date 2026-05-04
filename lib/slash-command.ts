@@ -31,6 +31,12 @@ import {
   isDuplicateUserMessage,
   isRateLimited,
 } from "./conversation";
+import { VERSION } from "./version";
+
+// Logged once per cold start so deploy drift between Vercel + Railway is
+// visible. Lives at module scope so the log fires on first import (i.e.
+// first slash command per cold start), not on every invocation.
+console.log(`[Futurefolk] slash-command module loaded (version=${VERSION})`);
 
 // Discord adapter auto-detects DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, and
 // DISCORD_APPLICATION_ID. Sarah's env uses DISCORD_APP_ID (per SETUP.md), so we
