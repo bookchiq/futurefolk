@@ -4,7 +4,7 @@ description: README.md, .v0/findings.md, STRATEGY-REVIEW.md reference removed ha
 type: code-review
 issue_id: 007
 priority: p2
-status: pending
+status: complete
 tags: [code-review, documentation, dead-code]
 ---
 
@@ -65,7 +65,13 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved across two parallel agents in Wave 4.
+
+- **README.md** — replaced the stale "Discord bot (ChatSDK)" section with an accurate post-split description: slash command via `lib/bot.ts` + ChatSDK, DM/reactions via `scripts/gateway-worker.ts` + discord.js. Updated env-var list and added "State adapter caveat" note.
+- **.v0/findings.md** — append-only respected. Added `> [Superseded YYYY-MM-DD]` notes under stale paragraphs (lines 62, 77, 87, 100, 102, 106) pointing forward to current state. Corrects: model name (`claude-sonnet-4-6`), constant name (`MODEL`), no temperature set, retry count (1), corrective nudge in messages array (not system prompt), tell constant `SUBSTRING_TELLS`.
+- **STRATEGY-REVIEW.md** (now at `docs/STRATEGY-REVIEW.md` per todo 010) — fixed `parseSlashOptions` line ref (was 239, now 158); added "Status as of 2026-05-03: §2 has been executed" note.
+- **`UserRecord` and `getUser`** in `lib/voice-profile.ts` — deleted by the OAuth/auth agent.
+- **`FutureSelfTurn`** in `lib/future-self.ts` — deleted by the docs agent.
 
 ## Resources
 

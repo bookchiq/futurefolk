@@ -111,8 +111,10 @@ export async function GET(request: NextRequest) {
     });
 
     if (!tokenRes.ok) {
-      const body = await tokenRes.text();
-      console.error("[Futurefolk] Discord token exchange failed:", tokenRes.status, body);
+      // Don't log the response body — Discord doesn't put secrets in it, but
+      // logging arbitrary upstream payloads in shared environments is bad
+      // hygiene. Status code is enough to triage.
+      console.error("[Futurefolk] Discord token exchange failed:", tokenRes.status);
       return NextResponse.redirect(
         new URL("/onboarding/connect?error=token_exchange_failed", request.url)
       );
@@ -132,8 +134,8 @@ export async function GET(request: NextRequest) {
       headers: { Authorization: `Bearer ${tokenJson.access_token}` },
     });
     if (!userRes.ok) {
-      const body = await userRes.text();
-      console.error("[Futurefolk] Discord user fetch failed:", userRes.status, body);
+      // See note above on token exchange — status code only.
+      console.error("[Futurefolk] Discord user fetch failed:", userRes.status);
       return NextResponse.redirect(
         new URL("/onboarding/connect?error=user_fetch_failed", request.url)
       );
@@ -150,12 +152,9 @@ export async function GET(request: NextRequest) {
   // sessionId / cookieStore came from the state-verification step above.
   const displayName = user.global_name || user.username || null;
 
+  let promoted = false;
   try {
-    const promoted = await promotePendingToUser(
-      sessionId,
-      user.id,
-      displayName
-    );
+    promoted = await promotePendingToUser(sessionId, user.id, displayName);
     if (!promoted) {
       console.warn(
         "[Futurefolk] OAuth callback: no pending profile for session",
@@ -170,6 +169,15 @@ export async function GET(request: NextRequest) {
   }
   // Clear the pending session cookie — it's single-use.
   cookieStore.delete(PENDING_COOKIE);
+
+  // If there was no pending profile to promote, don't lie to the user with
+  // "Your future selves are ready" — send them back to the connect page with
+  // an explanation so they can complete the survey first.
+  if (!promoted) {
+    return NextResponse.redirect(
+      new URL("/onboarding/connect?error=no_pending", request.url)
+    );
+  }
 
   return NextResponse.redirect(new URL("/onboarding/done", request.url));
 }

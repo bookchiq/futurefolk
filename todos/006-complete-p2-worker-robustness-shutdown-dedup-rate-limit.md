@@ -4,7 +4,7 @@ description: SIGTERM handler, dedup against Discord MESSAGE_CREATE redelivery, p
 type: code-review
 issue_id: 006
 priority: p2
-status: pending
+status: complete
 tags: [code-review, reliability, security, multi-tenant]
 ---
 
@@ -93,7 +93,15 @@ Schema: optionally add `discord_message_id` text column to `conversation_message
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Fixed in `harden/gateway-worker-production-readiness` branch.
+
+- 6a (graceful shutdown): added `SIGTERM`/`SIGINT` handlers at the bottom of `scripts/gateway-worker.ts` that call `client.destroy()` then `process.exit(0)`. Idempotent via `isShuttingDown` flag. No in-flight handler draining (each handler has its own try/catch and DB writes are fast).
+- 6b (dedup): new `isDuplicateUserMessage(channelId, userId, content)` helper in `lib/conversation.ts` checks for an existing user row in the last 30s. Worker DM handler runs the check before any other DB work — duplicates log + return without persisting or generating.
+- 6c (rate limit): new `isRateLimited(userId)` helper counts user turns in the last minute against `RATE_LIMIT_USER_TURNS_PER_MINUTE = 15`. Applied in three places: slash command (postEphemeral with friendly bounce), worker DM handler (silent drop), worker reaction handler (silent drop).
+
+The 30s dedup window and 15/min rate limit are conservative starting values. Tune after observation in production.
+
+Typecheck clean. Worker restarted.
 
 ## Resources
 

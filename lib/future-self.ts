@@ -22,7 +22,7 @@
  * that the tradeoff is fine.
  */
 
-import { generateText, type ModelMessage } from "ai";
+import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 
 import {
@@ -42,11 +42,6 @@ const MODEL = anthropic("claude-sonnet-4-6");
 // Hard ceiling so the model can't write essays even if the prompt fails.
 // Match-length-of-user is enforced in the system prompt.
 const MAX_OUTPUT_TOKENS = 600;
-
-export interface FutureSelfTurn {
-  role: "user" | "assistant";
-  text: string;
-}
 
 interface GenerateOpts {
   /** Discord user ID — used to load voice profile from DB */
@@ -88,11 +83,25 @@ export async function generateFutureSelfResponse(
 
   const messages = buildMessages(opts);
 
+  // Mark the system prompt as an ephemeral cache breakpoint so Anthropic caches
+  // the ~1500-token static prefix; reused across the regen path and any DM
+  // follow-up within the 5-min TTL at ~10% of normal input cost.
+  const systemMessage: SystemModelMessage = {
+    role: "system",
+    content: systemPrompt,
+    providerOptions: {
+      anthropic: { cacheControl: { type: "ephemeral" } },
+    },
+  };
+
   const first = await generateText({
     model: MODEL,
-    system: systemPrompt,
+    system: systemMessage,
     messages,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
+    // Bound the call so a stalled Anthropic stream can't hang the worker
+    // indefinitely (which would also block SIGTERM clean shutdown).
+    abortSignal: AbortSignal.timeout(60_000),
   });
 
   const firstTrip = detectTells(first.text);
@@ -107,9 +116,10 @@ export async function generateFutureSelfResponse(
 
   // Regenerate with an explicit corrective nudge in the messages array. We
   // do not modify the system prompt — that's the canonical voice direction.
+  // Reuses the same cached system message so the retry hits the cache.
   const retry = await generateText({
     model: MODEL,
-    system: systemPrompt,
+    system: systemMessage,
     messages: [
       ...messages,
       {
@@ -122,6 +132,9 @@ export async function generateFutureSelfResponse(
       },
     ],
     maxOutputTokens: MAX_OUTPUT_TOKENS,
+    // Tighter timeout on the retry — the regen path is intended to be a
+    // quick correction, not another full generation budget.
+    abortSignal: AbortSignal.timeout(45_000),
   });
 
   const retryTrip = detectTells(retry.text);
@@ -163,6 +176,8 @@ interface TellDescription {
   pattern: RegExp;
   label: string;
 }
+
+const INTENSIFIER_RE = /\b(genuinely|truly|actually|really)\b/gi;
 
 const SUBSTRING_TELLS: TellDescription[] = [
   {
@@ -219,13 +234,8 @@ export function detectTells(text: string): string | null {
  * think this is actually really worth doing").
  */
 function hasIntensifierStacking(text: string): boolean {
-  let count = 0;
-  for (const word of ["genuinely", "truly", "actually", "really"]) {
-    const matches = text.match(new RegExp(`\\b${word}\\b`, "gi"));
-    count += matches?.length ?? 0;
-    if (count >= 3) return true;
-  }
-  return false;
+  const matches = text.match(INTENSIFIER_RE);
+  return (matches?.length ?? 0) >= 3;
 }
 
 /**

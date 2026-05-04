@@ -4,7 +4,7 @@ description: ~50% input-token cost reduction; regen path becomes ~80% cheaper. S
 type: code-review
 issue_id: 004
 priority: p2
-status: pending
+status: complete
 tags: [code-review, performance, cost]
 ---
 
@@ -57,7 +57,7 @@ Verification: use `result.usage` (AI SDK v6 exposes provider metadata) to confir
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agent (Wave 3 of /resolve_todo_parallel). Built a `SystemModelMessage` once with `providerOptions.anthropic.cacheControl: { type: "ephemeral" }` and reused it in both `generateText` calls (first generation + retry). API surface verified against AI SDK v6 + `@ai-sdk/anthropic@3.0.74` types and ai-sdk.dev docs. Retry path benefits most — same system prompt + history identical to first call, so it should be a guaranteed cache hit.
 
 ## Resources
 

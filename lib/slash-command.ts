@@ -1,8 +1,10 @@
 /**
- * ChatSDK bot instance for Futurefolk.
+ * Slash command handler — `/futureself` invocations only.
  *
- * Scoped to slash command handling only. The HTTP Interactions endpoint at
- * app/api/webhooks/discord/route.ts dispatches into this module.
+ * Mounted by `app/api/webhooks/discord/route.ts` against ChatSDK's Discord
+ * webhook (HTTP Interactions endpoint). The ChatSDK `Chat` instance lives
+ * here because it's required for slash command dispatch + Ed25519 signature
+ * verification, but its Gateway-side handlers are deliberately not registered.
  *
  * Gateway-side triggers (DM continuations, ⏳ reactions) live in
  * scripts/gateway-worker.ts using discord.js directly. They were previously
@@ -15,7 +17,7 @@
  * Conversation memory is persisted to Postgres keyed by Discord channel ID
  * (lib/conversation.ts). The ChatSDK in-memory state adapter is required by
  * the Chat constructor's type signature but is otherwise unused.
- * See .v0/findings.md for the detailed split.
+ * See .v0/findings.md for the detailed split rationale.
  */
 
 import { Chat } from "chat";
@@ -24,7 +26,11 @@ import { createMemoryState } from "@chat-adapter/state-memory";
 
 import { type Horizon } from "./voice-profile";
 import { generateFutureSelfResponse } from "./future-self";
-import { appendMessage } from "./conversation";
+import {
+  appendMessage,
+  isDuplicateUserMessage,
+  isRateLimited,
+} from "./conversation";
 
 // Discord adapter auto-detects DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, and
 // DISCORD_APPLICATION_ID. Sarah's env uses DISCORD_APP_ID (per SETUP.md), so we
@@ -67,6 +73,19 @@ bot.onSlashCommand("/futureself", async (event) => {
     return;
   }
 
+  if (await isRateLimited(event.user.userId)) {
+    console.log(
+      "[Futurefolk] /futureself rate-limited",
+      event.user.userId,
+    );
+    await event.channel.postEphemeral(
+      event.user,
+      "you're moving fast. give it a minute and try again.",
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
   if (schedule) {
     await event.channel.postEphemeral(
       event.user,
@@ -89,6 +108,13 @@ bot.onSlashCommand("/futureself", async (event) => {
   // the worker's perspective.
   const dm = await bot.openDM(event.user);
   const channelId = dm.channelId;
+
+  if (await isDuplicateUserMessage(channelId, event.user.userId, about)) {
+    console.log(
+      `[Futurefolk] /futureself duplicate, skipping for ${event.user.userId}`
+    );
+    return;
+  }
 
   // Persist the user turn before generation so a crash mid-call doesn't lose
   // the question.
@@ -132,16 +158,13 @@ interface ParsedSlashOptions {
  * "Consumers needing the full option tree (names, types) can use event.raw."
  */
 function parseSlashOptions(raw: unknown): ParsedSlashOptions {
-  const data = (raw as { data?: { options?: DiscordSlashOption[] } })?.data;
-  const options = data?.options ?? [];
+  const options =
+    (raw as { data?: { options?: DiscordSlashOption[] } })?.data?.options ?? [];
   const out: ParsedSlashOptions = {};
-  for (const opt of options) {
-    if (opt.name === "horizon" && typeof opt.value === "string") {
-      out.horizon = opt.value;
-    } else if (opt.name === "about" && typeof opt.value === "string") {
-      out.about = opt.value;
-    } else if (opt.name === "schedule" && typeof opt.value === "string") {
-      out.schedule = opt.value;
+  for (const { name, value } of options) {
+    if (typeof value !== "string") continue;
+    if (name === "horizon" || name === "about" || name === "schedule") {
+      out[name] = value;
     }
   }
   return out;

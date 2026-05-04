@@ -4,7 +4,7 @@ description: Hardcoded specific topic in system prompt may bias future-self resp
 type: code-review
 issue_id: 013
 priority: p3
-status: pending
+status: complete
 tags: [code-review, prompt-engineering, voice-quality]
 ---
 
@@ -58,7 +58,7 @@ Keep both files in sync.
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agent (Wave 3 of /resolve_todo_parallel). The AVOID/AIM example block in `SHARED_BASE` (and mirrored in `.v0/prompts.md`) now uses bracketed placeholders: `[Topic]`, `[obvious framing]`, `[deeper reframing]`. The register signals (verdict opener, "genuinely" intensifier, third-person restatement, lowercase friend voice, "framing is a trap" rhythm, "the real question is..." pivot) are preserved. Only the topical content was abstracted. Both files in sync.
 
 ## Resources
 

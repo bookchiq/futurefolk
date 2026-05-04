@@ -4,7 +4,7 @@ description: Callback redirects to /onboarding/done even when no profile linked;
 type: code-review
 issue_id: 008
 priority: p2
-status: pending
+status: complete
 tags: [code-review, security, ux, data-integrity]
 ---
 
@@ -55,7 +55,10 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agent (Wave 4 of /resolve_todo_parallel).
+
+- **8a (no-pending redirect)**: callback now hoists `promoted` to outer scope. When `promoted === false`, redirects to `/onboarding/connect?error=no_pending` instead of `/onboarding/done`. Added `no_pending` entry to `ERROR_MESSAGES` map in connect page with user-friendly copy.
+- **8b (overwrite warning)**: `saveUserProfile` now does a pre-upsert SELECT on the existing row. If a non-null voice profile already exists, logs `console.warn("[Futurefolk] saveUserProfile: replacing existing voice profile for Discord user", discordUserId)` before proceeding with the upsert. Doesn't refuse — that requires a UI surface (the unbuilt `/profile` page). The warning won't fire on first-time promotion (existing row is null), correct behavior.
 
 ## Resources
 

@@ -1,5 +1,7 @@
 # Strategy Review
 
+> **Snapshot from 2026-05-03.** Strategic critical-pass review of the codebase at commit (current branch). May be stale; verify against current code before acting on specific line references.
+
 A critical pass over the codebase as it stands on 2026-05-03, the day after the hackathon win. Goal: name the strategic choices that look weak with a fresh eye, separate from "is this code clean," before workstreams #2 (Railway) and #3 (multi-tenant) lock in the current shape.
 
 Opinions are mine and clearly marked. Code quality is fine almost everywhere — the issues below are about *strategy* (what we're betting on, what each layer is buying us, where the ceiling is), not lint.
@@ -24,17 +26,19 @@ The current tell-detector approach hits diminishing returns fast. Adding more pa
 
 ## 2. ChatSDK is doing about half its job
 
+> [Status as of 2026-05-03: §2 has been executed; the inert handlers are removed and ChatSDK is scoped to the slash command webhook only. The table below describes the pre-split state for context. See the 2026-05-03 ChatSDK-split entry in `.v0/findings.md` for the current shape.]
+
 **Observation.** ChatSDK was a track requirement at the hackathon. Post-hackathon that constraint is gone. Looking at what it actually buys us in the deployed code:
 
 | ChatSDK feature | Status |
 |---|---|
 | Discord webhook signature verification | Used. Works. ~10 lines saved. |
-| Slash command dispatch + option parsing | Used. The `event.raw.data.options` workaround in `lib/bot.ts:239` shows the abstraction leaks. |
+| Slash command dispatch + option parsing | Used. The `event.raw.data.options` workaround in `lib/bot.ts:158` shows the abstraction leaks. |
 | `bot.openDM(...)`, `dm.post(...)` | Used. Reasonable wrappers. |
-| `dm.subscribe()` + `onSubscribedMessage` | Wired in `lib/bot.ts:159` but **inert**. State adapter is in-memory (loses subscriptions on cold start) and Hobby can't hold the Gateway WebSocket open anyway. |
-| `onReaction(...)` | Wired in `lib/bot.ts:122` but inert for the same reason. |
+| `dm.subscribe()` + `onSubscribedMessage` | Was wired in `lib/bot.ts` but **inert**. State adapter is in-memory (loses subscriptions on cold start) and Hobby can't hold the Gateway WebSocket open anyway. Removed in the 2026-05-03 split. |
+| `onReaction(...)` | Was wired in `lib/bot.ts` but inert for the same reason. Removed in the 2026-05-03 split. |
 | Multi-platform abstraction | Unused per `.v0/instructions.md` ("ship Discord only"). |
-| State adapter for thread metadata | `@chat-adapter/state-memory` — explicitly documented as "not for production" (`.v0/findings.md`). |
+| State adapter for thread metadata | `@chat-adapter/state-memory` — explicitly documented as "not for production" (`.v0/findings.md`). Still required by ChatSDK's `Chat` constructor type; we no longer use subscriptions. |
 
 **Why it matters.** Half of ChatSDK's surface is unused or broken in production. We carry the dependency cost, the indirection cost (the `parseSlashOptions` workaround), and the lock-in cost. And: the Railway Gateway worker we wrote during the hackathon **doesn't use ChatSDK at all** — it uses discord.js directly. So the pattern of "use ChatSDK for the slash command webhook, use discord.js directly for everything Gateway" is already established, just not stated.
 

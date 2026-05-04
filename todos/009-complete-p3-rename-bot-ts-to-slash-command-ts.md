@@ -4,7 +4,7 @@ description: With Gateway handlers gone, the file owns slash command logic only.
 type: code-review
 issue_id: 009
 priority: p3
-status: pending
+status: complete
 tags: [code-review, naming, refactor]
 ---
 
@@ -52,7 +52,12 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agent (Wave 4 of /resolve_todo_parallel).
+
+- `git mv lib/bot.ts lib/slash-command.ts` — git tracks the rename.
+- `app/api/webhooks/discord/route.ts` — import path updated to `@/lib/slash-command`. Export name (`bot`) kept the same; only the file location changed.
+- Top-of-file comment in `lib/slash-command.ts` refreshed to reflect the new framing.
+- Stale `lib/bot.ts` doc-comment reference in `lib/conversation.ts:5` was caught in the post-agent merge and updated to `lib/slash-command.ts`.
 
 ## Resources
 

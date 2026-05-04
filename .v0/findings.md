@@ -61,6 +61,8 @@ Discord splits its event delivery in a way ChatSDK papers over, but the underlyi
 
 Current state: `bot.onReaction(...)` and `bot.onSubscribedMessage(...)` handlers are still wired in `lib/bot.ts` — they're correct code, they just have nothing forwarding events into them on Hobby. Slash commands work fine.
 
+> [Superseded 2026-05-03] The inert `bot.onReaction` and `bot.onSubscribedMessage` handlers were removed from `lib/bot.ts`. ChatSDK is now scoped to the slash command webhook only; DM continuations and reactions are handled by `scripts/gateway-worker.ts` via discord.js. See the 2026-05-03 ChatSDK-split entry at the bottom of this file.
+
 Two ways to light up the Gateway-only triggers without touching `lib/bot.ts`:
 
 1. Run a small Gateway worker outside Vercel (Railway/Fly/etc.) that POSTs `MESSAGE_CREATE` + `MESSAGE_REACTION_ADD` events to the same webhook URL.
@@ -78,6 +80,8 @@ After the bot's first DM post, call `thread.subscribe()`. From that point on, fo
 
 Per-thread metadata (which horizon started this thread, what the topic was) is stored via `thread.setState(...)` and read back via `await thread.state`. Carry the horizon through every turn — a thread that started as `5y` must not silently flip to `1y`.
 
+> [Superseded 2026-05-03] None of this is current. The slash command no longer calls `dm.subscribe()` or `dm.setState()`, and `onSubscribedMessage` was removed. DM continuations are handled by `scripts/gateway-worker.ts`, which derives the horizon from the most recent `conversation_messages` row instead of from per-thread state. See the 2026-05-03 ChatSDK-split entry at the bottom of this file.
+
 ### State adapter is in-memory ON PURPOSE for now
 
 `@chat-adapter/state-memory` is fine for local dev and the demo, but it loses subscriptions on every cold start. Before a real deploy, switch to `@chat-adapter/state-redis` (Upstash works, see chat-sdk skill notes) or `@chat-adapter/state-pg`. Until then, expect DM continuations to break across deploys.
@@ -85,6 +89,8 @@ Per-thread metadata (which horizon started this thread, what the topic was) is s
 ### Hourglass reaction matching
 
 The ⏳ emoji isn't in the predefined `emoji` map (`thumbs_up`, `heart`, etc.). Match on `event.rawEmoji === "⏳"` inside a catch-all `bot.onReaction` handler instead of trying to use `emoji.custom(...)` for a unicode character.
+
+> [Superseded 2026-05-03] `bot.onReaction` no longer exists in `lib/bot.ts`. ⏳ matching now lives in `scripts/gateway-worker.ts` against `discord.js`'s `messageReactionAdd` event, comparing `reaction.emoji.name === "⏳"`. See the 2026-05-03 ChatSDK-split entry at the bottom of this file.
 
 ## 2026-05-02 — Voice profile + AI integration
 
@@ -99,11 +105,17 @@ The placeholder Discord responses are gone. Real future-self generation is wired
 
 Default is `anthropic/claude-sonnet-4.5` via the AI Gateway (Anthropic is zero-config). The brief mentioned hypothetical "Opus 4.7" / "Sonnet 4.6" — those don't exist on the gateway as of 2026-05-02. Confirmed via `curl https://ai-gateway.vercel.sh/v1/models | jq '... | startswith("anthropic/")'`. If quality is poor, swap `DEFAULT_MODEL` in `lib/future-self.ts` to `anthropic/claude-opus-4`. Do NOT add a UI toggle for users to pick — the brief explicitly forbids it.
 
+> [Superseded 2026-05-03] The model is now `claude-sonnet-4-6` and the constant is named `MODEL` (not `DEFAULT_MODEL`). It's called via `@ai-sdk/anthropic` directly with `ANTHROPIC_API_KEY`, not through the AI Gateway — the gateway requires a credit card on file. To swap models, edit the `anthropic("claude-sonnet-4-6")` call at the top of `lib/future-self.ts`.
+
 `temperature: 0.85` and `maxOutputTokens: 600`. Higher temp than typical because the voice depends on idiom and texture, not consistency. Don't drop it below 0.7 without testing.
+
+> [Superseded 2026-05-03] The current code does NOT set `temperature` at all — it relies on the model default. `maxOutputTokens: 600` is still correct. The two `generateText` calls (initial + regen) also pass `abortSignal: AbortSignal.timeout(60_000 / 45_000)` and the system message uses Anthropic ephemeral cache control (`cacheControl: { type: "ephemeral" }`).
 
 ### Tell-detection regex
 
 `STAY_IN_CHARACTER_TELLS` in `lib/future-self.ts` flags: "Great question", "I'd be happy to help", "Here's the thing:", "As an AI / language model / assistant", and any response with three consecutive `- ` bullet lines when the user didn't ask for a list. On a hit we re-call the model with an explicit "you broke character — try again, no preamble, no list" suffix appended to the system prompt. Up to 2 retries; if we still fail, we ship the last attempt rather than block the user. The prompt itself should prevent these — the regex is a cheap safety net.
+
+> [Superseded 2026-05-03] The constant is now named `SUBSTRING_TELLS` (not `STAY_IN_CHARACTER_TELLS`) and the pattern set has expanded to include verdict openers ("That's a real concern", "The X is genuinely worth doing"), AI-refusal boilerplate, and self-identification as an AI. Two additional structural detectors run alongside it: `hasThreeBulletStructure` and `hasIntensifierStacking` (3+ uses of genuinely/truly/actually/really in one response). On a hit we regenerate **once** (not up to 2 retries); if the retry still trips, we log and ship it. The corrective nudge is appended as an extra `assistant` + `user` turn in the **messages array**, not as a suffix to the system prompt — the system prompt is the canonical voice direction and stays untouched (with an explicit comment in the code calling this out).
 
 ### Privacy
 

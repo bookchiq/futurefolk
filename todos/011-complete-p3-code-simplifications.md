@@ -4,7 +4,7 @@ description: A few drive-by simplifications. ~10 LOC reduction, slightly clearer
 type: code-review
 issue_id: 011
 priority: p3
-status: pending
+status: complete
 tags: [code-review, simplicity, performance]
 ---
 
@@ -68,7 +68,10 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agents (Wave 3 of /resolve_todo_parallel).
+
+- 11a (`hasIntensifierStacking`): hoisted `INTENSIFIER_RE` to module scope alongside `SUBSTRING_TELLS`. Function body collapsed to `text.match(INTENSIFIER_RE); return (matches?.length ?? 0) >= 3`.
+- 11b (`parseSlashOptions`): compacted three near-identical conditional branches into a literal-union `if (name === "horizon" || name === "about" || name === "schedule") { out[name] = value }`. Same semantics, type-safe via the union narrowing. JSDoc preserved.
 
 ## Resources
 

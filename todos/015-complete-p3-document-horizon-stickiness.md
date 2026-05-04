@@ -4,7 +4,7 @@ description: Worker reads horizon from most recent persisted row. User can switc
 type: code-review
 issue_id: 015
 priority: p3
-status: pending
+status: complete
 tags: [code-review, documentation, ux]
 ---
 
@@ -45,7 +45,10 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agent (Wave 3 of /resolve_todo_parallel).
+
+- `lib/conversation.ts` — extended the JSDoc on `getRecentMessagesAndHorizon` with a "Horizon stickiness" paragraph explaining the sticky-by-most-recent-write semantics, including how reactions can re-pin a 5y thread to 1y and how `/futureself` re-pins explicitly.
+- `README.md` — added a "Switching horizons mid-thread" subsection adjacent to existing trigger documentation, in user-facing language. Did NOT touch the pre-Wave-2 stale references (those belong to todo 007).
 
 ## Resources
 
