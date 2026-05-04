@@ -34,6 +34,7 @@ import {
 } from "../lib/conversation";
 import { getVoiceProfile, type Horizon } from "../lib/voice-profile";
 import { scrubForPromptInterpolation } from "../lib/voice";
+import { VERSION } from "../lib/version";
 
 const HOURGLASS = "⏳";
 const REACTION_DEFAULT_HORIZON: Horizon = "1y";
@@ -57,7 +58,9 @@ const client = new Client({
 });
 
 client.once(Events.ClientReady, (c) => {
-  console.log(`[gateway-worker] connected as ${c.user.tag}`);
+  console.log(
+    `[gateway-worker] connected as ${c.user.tag} (version=${VERSION})`
+  );
 });
 
 // ---------------------------------------------------------------------------
