@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 interface QuestionScreenProps {
   questionNumber: number;
   totalQuestions: number;
@@ -13,6 +15,12 @@ interface QuestionScreenProps {
   canContinue: boolean;
   isFirst: boolean;
   isLast: boolean;
+  /**
+   * Optional content rendered between the textarea and the navigation
+   * buttons. Used for question-specific affordances like the live
+   * sample-messages parsed preview.
+   */
+  belowInput?: ReactNode;
 }
 
 export function QuestionScreen({
@@ -28,6 +36,7 @@ export function QuestionScreen({
   canContinue,
   isFirst,
   isLast,
+  belowInput,
 }: QuestionScreenProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && e.metaKey && canContinue) {
@@ -69,6 +78,9 @@ export function QuestionScreen({
           isLarge ? "min-h-64" : "min-h-32"
         }`}
       />
+
+      {/* Optional question-specific affordance (e.g. parsed-messages preview) */}
+      {belowInput}
 
       {/* Navigation */}
       <div className="flex justify-between items-center pt-4">

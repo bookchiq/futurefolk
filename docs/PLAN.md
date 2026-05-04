@@ -79,9 +79,9 @@ Status legend: `[ ]` not started • `[~]` in progress • `[x]` done
 
 ## P5. Onboarding sample-message preview
 
-- [ ] Live "we extracted N messages — does this look right?" preview using `splitSampleMessages`
-- [ ] Allow individual message edits / deletions
-- [ ] Optional: a "this looks wrong" instruction explaining blank-line-vs-newline parsing
+- [x] Live "we see N messages" preview using `splitSampleMessages` (extracted to `lib/parse-sample-messages.ts` so the client can call it without pulling in the server-only voice-profile module)
+- [ ] (Deferred) Allow individual message edits / deletions — needs more UI work; defer until a friend tester reports parsing issues that the current preview can't fix
+- [x] "This looks like one big message" hint when the input has newlines but the parser collapsed everything to one entry
 
 ## P6. Voice profile editor (`/profile` page)
 
