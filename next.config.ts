@@ -1,3 +1,4 @@
+import { withWorkflow } from "workflow/next";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -22,4 +23,6 @@ const nextConfig: NextConfig = {
   ],
 };
 
-export default nextConfig;
+// Wrap with `withWorkflow()` to enable the `"use workflow"` and `"use step"`
+// directives. Required by Workflow SDK's Next.js integration.
+export default withWorkflow(nextConfig);

@@ -57,6 +57,30 @@ CREATE INDEX IF NOT EXISTS conversation_messages_user_recent_idx
 
 Both applied to Neon as of 2026-05-03.
 
+## Scheduled check-ins schema (apply when PR #21 merges)
+
+The scheduled-check-in workflow (PLAN P8) requires a new table. Apply on Neon manually — there's no migration system in this repo. Idempotent: rerunning is a no-op.
+
+```sql
+CREATE TABLE IF NOT EXISTS scheduled_check_ins (
+  id BIGSERIAL PRIMARY KEY,
+  discord_user_id TEXT NOT NULL,
+  horizon TEXT NOT NULL CHECK (horizon IN ('1y', '5y')),
+  topic TEXT NOT NULL,
+  scheduled_for TIMESTAMPTZ NOT NULL,
+  workflow_run_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'sent', 'cancelled', 'failed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sent_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS scheduled_check_ins_user_status_idx
+  ON scheduled_check_ins (discord_user_id, status, scheduled_for);
+```
+
+The workflow itself runs as a durable Vercel Function — it sleeps until `scheduled_for` (the sleep survives deploys/restarts) then wakes, generates the check-in message, posts it via raw Discord REST API, and persists the assistant turn into `conversation_messages` so subsequent DM replies thread cleanly.
+
 ## Tunables (env vars)
 
 | Var | Default | Purpose |
