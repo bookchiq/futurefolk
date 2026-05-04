@@ -4,7 +4,7 @@ description: Discord client retries are real. Slash command path persists and ge
 type: code-review
 issue_id: 026
 priority: p2
-status: pending
+status: complete
 tags: [code-review, reliability, cost]
 ---
 
@@ -54,7 +54,7 @@ Option C. Same helper as the worker, same SQL pattern. Schedule Option A for the
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agent (Wave 3 of /resolve_todo_parallel). Used Option C from the proposed solutions: reuse the existing `isDuplicateUserMessage` helper. Slash handler now calls dedup check after `bot.openDM` (we need `dm.channelId`) and before `appendMessage(user)`. A duplicate slash invocation costs one DM-open call but skips the LLM round-trip and the duplicate DM post. Schema-extension Option A (track Discord interaction IDs) is deferred to a later PR.
 
 ## Resources
 

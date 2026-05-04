@@ -59,6 +59,16 @@ export async function getRecentMessages(
  *
  * Returns `horizon: null` if the channel has no rows yet — caller decides
  * the fallback (typically `REACTION_DEFAULT_HORIZON`).
+ *
+ * Horizon "stickiness": this returns whatever horizon the MOST RECENT
+ * persisted user/assistant turn used. The slash command repins horizon by
+ * inserting a fresh row with the requested value (1y or 5y); the worker DM
+ * continuation reads back the most recent value (so 5y stays 5y across
+ * replies). A reaction trigger always inserts at `REACTION_DEFAULT_HORIZON`
+ * (1y), which can re-pin a 5y DM channel to 1y if the user happens to also
+ * react to a server message before continuing the DM thread. Users can
+ * re-pin explicitly by running `/futureself` again with the desired
+ * horizon.
  */
 export async function getRecentMessagesAndHorizon(
   channelId: string,

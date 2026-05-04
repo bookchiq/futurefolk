@@ -24,7 +24,11 @@ import { createMemoryState } from "@chat-adapter/state-memory";
 
 import { type Horizon } from "./voice-profile";
 import { generateFutureSelfResponse } from "./future-self";
-import { appendMessage, isRateLimited } from "./conversation";
+import {
+  appendMessage,
+  isDuplicateUserMessage,
+  isRateLimited,
+} from "./conversation";
 
 // Discord adapter auto-detects DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, and
 // DISCORD_APPLICATION_ID. Sarah's env uses DISCORD_APP_ID (per SETUP.md), so we
@@ -103,6 +107,13 @@ bot.onSlashCommand("/futureself", async (event) => {
   const dm = await bot.openDM(event.user);
   const channelId = dm.channelId;
 
+  if (await isDuplicateUserMessage(channelId, event.user.userId, about)) {
+    console.log(
+      `[Futurefolk] /futureself duplicate, skipping for ${event.user.userId}`
+    );
+    return;
+  }
+
   // Persist the user turn before generation so a crash mid-call doesn't lose
   // the question.
   await appendMessage(channelId, event.user.userId, horizon, "user", about);
@@ -145,16 +156,13 @@ interface ParsedSlashOptions {
  * "Consumers needing the full option tree (names, types) can use event.raw."
  */
 function parseSlashOptions(raw: unknown): ParsedSlashOptions {
-  const data = (raw as { data?: { options?: DiscordSlashOption[] } })?.data;
-  const options = data?.options ?? [];
+  const options =
+    (raw as { data?: { options?: DiscordSlashOption[] } })?.data?.options ?? [];
   const out: ParsedSlashOptions = {};
-  for (const opt of options) {
-    if (opt.name === "horizon" && typeof opt.value === "string") {
-      out.horizon = opt.value;
-    } else if (opt.name === "about" && typeof opt.value === "string") {
-      out.about = opt.value;
-    } else if (opt.name === "schedule" && typeof opt.value === "string") {
-      out.schedule = opt.value;
+  for (const { name, value } of options) {
+    if (typeof value !== "string") continue;
+    if (name === "horizon" || name === "about" || name === "schedule") {
+      out[name] = value;
     }
   }
   return out;

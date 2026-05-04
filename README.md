@@ -69,6 +69,10 @@ Hobby accounts are limited to **one cron run per day**, which makes a `*/9 * * *
 
 Either way, no app code in `lib/bot.ts` needs to change.
 
+### Switching horizons mid-thread
+
+Reactions (⏳) always start a 1-year-future-self thread. To start or switch a thread to 5-year-future-self, run `/futureself horizon:5y about:<topic>` in any channel the bot can see. The most recent slash invocation's horizon is the "sticky" horizon for that DM thread until the next slash invocation re-pins it.
+
 ### Registering the `/futureself` slash command
 
 ChatSDK dispatches slash commands but does not register them with Discord. Run the script once after each change to the command shape:
