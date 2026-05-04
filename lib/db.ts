@@ -15,12 +15,11 @@
 
 import { neon } from "@neondatabase/serverless";
 
-if (!process.env.DATABASE_URL) {
-  // Don't crash at import time on the client / during build — only when used.
-  // Throwing here in dev would break unrelated routes.
-  console.warn(
-    "[Futurefolk] DATABASE_URL is not set. Voice profile + conversation memory will fail at runtime."
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL is not set. Configure it in Vercel project env (or .env.local for local dev)."
   );
 }
 
-export const sql = neon(process.env.DATABASE_URL ?? "");
+export const sql = neon(DATABASE_URL);
