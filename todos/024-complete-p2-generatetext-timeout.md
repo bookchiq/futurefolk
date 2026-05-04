@@ -4,7 +4,7 @@ description: Both first-pass and retry generateText calls run without AbortSigna
 type: code-review
 issue_id: 024
 priority: p2
-status: pending
+status: complete
 tags: [code-review, reliability, performance]
 ---
 
@@ -50,7 +50,7 @@ Apply to both. Wrap in try/catch that distinguishes timeout (`err.name === "Time
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Fixed in PR #10 follow-up. Both `generateText` calls now have `abortSignal: AbortSignal.timeout(...)`. First-pass uses 60s; retry uses tighter 45s (regen path is intended to be a quick correction, not another full budget). Bounds in-flight handler duration so todo 021's SIGTERM drain (25s) is meaningful — a stalled Anthropic stream can't outlive the drain budget without surfacing as a TimeoutError.
 
 ## Resources
 

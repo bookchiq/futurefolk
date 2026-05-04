@@ -4,7 +4,7 @@ description: Multiple log lines emit text.slice(0, 80) of user-controlled conten
 type: code-review
 issue_id: 027
 priority: p2
-status: pending
+status: complete
 tags: [code-review, privacy, multi-tenant]
 ---
 
@@ -56,7 +56,7 @@ Recommended option. Pair with a one-paragraph note in `.v0/findings.md` (or new 
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Fixed in PR #10 follow-up. Worker logs no longer slice user-controlled content. Where the DM/reaction logs previously printed `text.slice(0, 80)` and `reactedText.slice(0, 80)`, they now print `len=${text.length}` etc. User IDs (`discord_user_id`) and decisions (rate-limited, duplicate, un-onboarded) are still logged — those are identifiers, not content.
 
 ## Resources
 

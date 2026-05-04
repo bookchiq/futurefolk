@@ -1,14 +1,15 @@
 /**
- * Local Gateway worker for DM continuations.
+ * Local Gateway worker for DM continuations and ⏳ reactions.
  *
- * Vercel Hobby can't hold a WebSocket open, so DM messages never reach the
- * /api/webhooks/discord endpoint. Run this script from your laptop during the
- * demo: it opens a Discord Gateway connection, listens for DM messages, and
- * replies using the same future-self generator and DB the deployed app uses.
+ * Vercel Hobby can't hold a WebSocket open, so DM messages and reactions
+ * never reach the /api/webhooks/discord endpoint. This worker holds the
+ * Gateway connection open (locally, or on Railway) and replies using the
+ * same future-self generator and DB the deployed slash command path uses.
  *
- *   pnpm exec tsx --env-file=.env.local scripts/gateway-worker.ts
+ *   pnpm start:worker
  *
  * Reads DISCORD_BOT_TOKEN, ANTHROPIC_API_KEY, DATABASE_URL from the env.
+ * Optional tunables: DEDUP_WINDOW_SECONDS, RATE_LIMIT_USER_TURNS_PER_MINUTE.
  */
 
 import {
@@ -27,16 +28,21 @@ import {
 import { generateFutureSelfResponse } from "../lib/future-self";
 import {
   appendMessage,
-  getRecentMessages,
+  getRecentMessagesAndHorizon,
   isDuplicateUserMessage,
   isRateLimited,
 } from "../lib/conversation";
-import { sql } from "../lib/db";
 import { getVoiceProfile, type Horizon } from "../lib/voice-profile";
 import { scrubForPromptInterpolation } from "../lib/voice";
 
 const HOURGLASS = "⏳";
 const REACTION_DEFAULT_HORIZON: Horizon = "1y";
+
+// Drain budget on shutdown. Railway's default SIGTERM grace is ~30s; we leave
+// some headroom for the final exit. The generateText calls in lib/future-self
+// have their own AbortSignal.timeout(60s) but a single in-flight handler
+// shouldn't hold the worker that long during shutdown — bound it here.
+const SHUTDOWN_DRAIN_MS = 25_000;
 
 const client = new Client({
   intents: [
@@ -55,43 +61,51 @@ client.once(Events.ClientReady, (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// Lifecycle state — tracked so SIGTERM can drain in-flight work cleanly.
+// ---------------------------------------------------------------------------
+
+let isShuttingDown = false;
+let inFlight = 0;
+
+// ---------------------------------------------------------------------------
 // DM continuations
 // ---------------------------------------------------------------------------
 
 client.on(Events.MessageCreate, async (msg: Message) => {
-  try {
-    if (msg.author.bot) return;
-    // 1:1 DMs only. Group DMs (ChannelType.GroupDM) are out of scope.
-    if (msg.channel.type !== ChannelType.DM) return;
+  if (isShuttingDown) return;
+  if (msg.author.bot) return;
+  // 1:1 DMs only. Group DMs (ChannelType.GroupDM) are out of scope.
+  if (msg.channel.type !== ChannelType.DM) return;
 
+  inFlight++;
+  try {
     const channelId = msg.channelId;
     const userId = msg.author.id;
     const text = msg.content;
 
-    // Rate-limit BEFORE dedup. Otherwise a flood of identical messages hits
-    // the dedup short-circuit, never persists, and the rate counter (which
-    // counts persisted user rows) never increments — duplicate-spam slips
-    // through unbounded.
-    if (await isRateLimited(userId)) {
+    // Run all four independent gates/reads in parallel:
+    //   - rate limit (always check first conceptually; cheap query)
+    //   - dedup (against MESSAGE_CREATE redelivery)
+    //   - profile (onboarding gate)
+    //   - history + horizon (combined helper, one round-trip)
+    // Even though one bail wastes the others, the happy path is the common
+    // case and parallelizing saves 60-160ms per DM. Bails return before any
+    // expensive work (LLM, DM send) runs.
+    const [rateLimited, isDup, profile, recent] = await Promise.all([
+      isRateLimited(userId),
+      isDuplicateUserMessage(channelId, userId, text),
+      getVoiceProfile(userId),
+      getRecentMessagesAndHorizon(channelId, 20),
+    ]);
+
+    if (rateLimited) {
       console.log(`[gateway-worker] DM rate-limited, dropping: ${userId}`);
-      // Silent drop — no DM back, since a rate-limited user is probably
-      // hostile or accidental and either way the right move is restraint.
       return;
     }
-
-    // Dedup against Discord MESSAGE_CREATE redelivery (which happens when
-    // the worker reconnects with an unacknowledged session).
-    if (await isDuplicateUserMessage(channelId, userId, text)) {
+    if (isDup) {
       console.log(`[gateway-worker] DM duplicate, skipping: ${userId}`);
       return;
     }
-
-    // Onboarding gate. Mirrors the reaction handler — un-onboarded users
-    // should not receive a bot-initiated DM (Discord anti-spam stance), and
-    // the soft-fail string in lib/future-self.ts would otherwise reach them
-    // here on a continuation if they were ever DM'd before their profile
-    // was created/restored.
-    const profile = await getVoiceProfile(userId);
     if (!profile) {
       console.log(
         `[gateway-worker] DM from un-onboarded user ${userId}, ignoring`
@@ -99,27 +113,18 @@ client.on(Events.MessageCreate, async (msg: Message) => {
       return;
     }
 
-    // Pull the horizon from the most recent persisted turn so 5y stays 5y.
-    const rows = (await sql`
-      SELECT horizon FROM conversation_messages
-      WHERE channel_id = ${channelId}
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1
-    `) as Array<{ horizon: Horizon }>;
-    const horizon: Horizon = rows[0]?.horizon ?? REACTION_DEFAULT_HORIZON;
+    const horizon: Horizon = recent.horizon ?? REACTION_DEFAULT_HORIZON;
+    const history = recent.history;
 
     console.log(
-      `[gateway-worker] DM from ${userId} (${horizon}): ${text.slice(0, 80)}`
+      `[gateway-worker] DM from ${userId} (${horizon}, len=${text.length})`
     );
 
     await msg.channel.sendTyping().catch(() => undefined);
 
-    // Read history BEFORE persisting the new user turn — the model's
-    // `prompt` argument carries the new turn separately.
-    const history = await getRecentMessages(channelId, 20);
-
     // Persist the user turn before generation so a crash mid-call doesn't
-    // lose the question.
+    // lose the question. History was already read above; the model's
+    // `prompt` argument carries the new turn separately.
     await appendMessage(channelId, userId, horizon, "user", text);
 
     const reply = await generateFutureSelfResponse({
@@ -131,12 +136,13 @@ client.on(Events.MessageCreate, async (msg: Message) => {
     });
 
     await msg.channel.send(reply);
-
     await appendMessage(channelId, userId, horizon, "assistant", reply);
 
-    console.log(`[gateway-worker] DM replied (${reply.length} chars)`);
+    console.log(`[gateway-worker] DM replied (len=${reply.length})`);
   } catch (err) {
     console.error("[gateway-worker] DM handler error:", err);
+  } finally {
+    inFlight--;
   }
 });
 
@@ -150,9 +156,11 @@ client.on(
     reaction: MessageReaction | PartialMessageReaction,
     user: User | PartialUser
   ) => {
-    try {
-      if (user.bot) return;
+    if (isShuttingDown) return;
+    if (user.bot) return;
 
+    inFlight++;
+    try {
       if (reaction.partial) {
         try {
           await reaction.fetch();
@@ -170,6 +178,23 @@ client.on(
         }
       }
 
+      // Run profile + rate-limit in parallel — both gates required.
+      const [profile, rateLimited] = await Promise.all([
+        getVoiceProfile(user.id),
+        isRateLimited(user.id),
+      ]);
+
+      if (!profile) {
+        console.log(
+          `[gateway-worker] reaction from un-onboarded user ${user.id}, ignoring`
+        );
+        return;
+      }
+      if (rateLimited) {
+        console.log(`[gateway-worker] reaction rate-limited: ${user.id}`);
+        return;
+      }
+
       const reactedText = reaction.message.content ?? "";
       const horizon = REACTION_DEFAULT_HORIZON;
       const promptText =
@@ -177,34 +202,16 @@ client.on(
         "(reacted to a message I couldn't read — context unavailable)";
 
       console.log(
-        `[gateway-worker] ⏳ reaction by ${user.id}: ${reactedText.slice(0, 80)}`
+        `[gateway-worker] ⏳ reaction by ${user.id} (len=${reactedText.length})`
       );
-
-      // Onboarding gate: don't open a DM with users who haven't built a
-      // voice profile. Otherwise we'd send them an unsolicited
-      // "you haven't onboarded" DM, which violates Discord's anti-spam
-      // stance and exposes the bot in environments Sarah doesn't control.
-      const profile = await getVoiceProfile(user.id);
-      if (!profile) {
-        console.log(
-          `[gateway-worker] reaction from un-onboarded user ${user.id}, ignoring`
-        );
-        return;
-      }
-
-      if (await isRateLimited(user.id)) {
-        console.log(`[gateway-worker] reaction rate-limited: ${user.id}`);
-        return;
-      }
 
       const fullUser = user.partial ? await user.fetch() : user;
       const dm = await fullUser.createDM();
 
-      // Persist user turn before generation so a crash mid-call doesn't lose
-      // the reacted-message context. Scrub the reacted text before persisting
-      // — otherwise an attacker's reacted-message body sits in the DM history
-      // and re-injects on every subsequent continuation turn (cross-context
-      // injection vector). Scrub matches what the system prompt sees.
+      // Persist the scrubbed form. Raw reacted text could host injection
+      // payloads; the system prompt already scrubs at interpolation time
+      // (lib/voice.ts::buildTriggerContext), but the row would replay raw
+      // on the next continuation turn unless we scrub before persistence.
       const persistedText = scrubForPromptInterpolation(promptText);
       await appendMessage(dm.id, fullUser.id, horizon, "user", persistedText);
 
@@ -216,12 +223,13 @@ client.on(
       });
 
       await dm.send(reply);
-
       await appendMessage(dm.id, fullUser.id, horizon, "assistant", reply);
 
-      console.log(`[gateway-worker] reaction replied (${reply.length} chars)`);
+      console.log(`[gateway-worker] reaction replied (len=${reply.length})`);
     } catch (err) {
       console.error("[gateway-worker] reaction handler error:", err);
+    } finally {
+      inFlight--;
     }
   }
 );
@@ -230,20 +238,58 @@ client.on(
 // Graceful shutdown
 // ---------------------------------------------------------------------------
 
-let isShuttingDown = false;
-const shutdown = (signal: string) => {
+const shutdown = async (signal: string) => {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log(`[gateway-worker] received ${signal}, shutting down`);
-  // discord.js's destroy() closes the WebSocket cleanly. We don't await
-  // in-flight handlers because they each have their own try/catch and the
-  // DB writes inside them complete fast enough that the SIGTERM grace
-  // window typically covers them.
-  client.destroy();
+  console.log(
+    `[gateway-worker] received ${signal}, draining ${inFlight} in-flight handler(s)`
+  );
+
+  // Stop accepting new events first, then await the destroy so the WebSocket
+  // close frame actually flushes (Discord otherwise records an abnormal
+  // disconnect).
+  try {
+    await client.destroy();
+  } catch (err) {
+    console.error("[gateway-worker] destroy failed:", err);
+  }
+
+  // Drain in-flight handlers up to a deadline. Each handler's generateText
+  // call has its own 60s timeout; this drain budget is shorter and bounded
+  // by Railway's SIGTERM grace window.
+  const deadline = Date.now() + SHUTDOWN_DRAIN_MS;
+  while (inFlight > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  if (inFlight > 0) {
+    console.warn(
+      `[gateway-worker] exiting with ${inFlight} handler(s) still in flight`
+    );
+  }
   process.exit(0);
 };
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+
+// Surface async errors that escape the per-handler try/catch — without
+// these listeners, an unhandled rejection would crash silently on Node.js
+// 24+ (rejection-throw policy), or print an unprefixed warning on older
+// versions. Either way, Railway logs lose the prefix that makes them
+// findable.
+process.on("unhandledRejection", (reason) => {
+  console.error("[gateway-worker] unhandledRejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[gateway-worker] uncaughtException:", err);
+  // Non-async throws that escape the handler are not safely recoverable;
+  // exit so Railway restarts cleanly.
+  process.exit(1);
+});
 
 // ---------------------------------------------------------------------------
 // Boot

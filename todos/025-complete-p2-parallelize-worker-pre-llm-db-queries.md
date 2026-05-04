@@ -4,7 +4,7 @@ description: Worker DM handler runs 4 sequential DB round-trips before generatio
 type: code-review
 issue_id: 025
 priority: p2
-status: pending
+status: complete
 tags: [code-review, performance]
 ---
 
@@ -79,7 +79,14 @@ Apply (a) and (c) — they're cheap. Apply (b) as part of todo 028 (move horizon
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Fixed in PR #10 follow-up.
+
+- Added `getRecentMessagesAndHorizon` in `lib/conversation.ts` that returns history + horizon in a single query (replaces the worker's inline horizon SELECT).
+- `getRecentMessages` now wraps the new helper for backward compatibility.
+- DM handler runs four queries in parallel via Promise.all: rate-limit, dedup, profile, history+horizon. Bails early on any gate failure. Cuts pre-generation DB latency from ~4 sequential round-trips (150-400ms) to one parallel round-trip wave.
+- Reaction handler runs profile + rate-limit in parallel.
+
+This subsumes todo 028 (move horizon read to conversation helper) — the inline SQL is gone.
 
 ## Resources
 

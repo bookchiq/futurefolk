@@ -93,6 +93,9 @@ export async function generateFutureSelfResponse(
     system: systemPrompt,
     messages,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
+    // Bound the call so a stalled Anthropic stream can't hang the worker
+    // indefinitely (which would also block SIGTERM clean shutdown).
+    abortSignal: AbortSignal.timeout(60_000),
   });
 
   const firstTrip = detectTells(first.text);
@@ -122,6 +125,9 @@ export async function generateFutureSelfResponse(
       },
     ],
     maxOutputTokens: MAX_OUTPUT_TOKENS,
+    // Tighter timeout on the retry — the regen path is intended to be a
+    // quick correction, not another full generation budget.
+    abortSignal: AbortSignal.timeout(45_000),
   });
 
   const retryTrip = detectTells(retry.text);

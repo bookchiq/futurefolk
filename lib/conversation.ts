@@ -47,15 +47,36 @@ export async function getRecentMessages(
   channelId: string,
   limit = 20
 ): Promise<ConversationTurn[]> {
+  const { history } = await getRecentMessagesAndHorizon(channelId, limit);
+  return history;
+}
+
+/**
+ * Combined helper: load the most recent N turns AND the horizon used on the
+ * most recent persisted row, in a single round-trip. The gateway worker uses
+ * this on every DM continuation; the inline horizon SELECT it replaces was
+ * an extra round-trip per message.
+ *
+ * Returns `horizon: null` if the channel has no rows yet — caller decides
+ * the fallback (typically `REACTION_DEFAULT_HORIZON`).
+ */
+export async function getRecentMessagesAndHorizon(
+  channelId: string,
+  limit = 20
+): Promise<{ history: ConversationTurn[]; horizon: Horizon | null }> {
   const rows = (await sql`
-    SELECT role, content
+    SELECT role, content, horizon
     FROM conversation_messages
     WHERE channel_id = ${channelId}
     ORDER BY created_at DESC, id DESC
     LIMIT ${limit}
-  `) as Array<{ role: "user" | "assistant"; content: string }>;
+  `) as Array<{ role: "user" | "assistant"; content: string; horizon: Horizon }>;
 
-  return rows.reverse().map((r) => ({ role: r.role, content: r.content }));
+  const horizon = rows[0]?.horizon ?? null;
+  const history = rows
+    .reverse()
+    .map((r) => ({ role: r.role, content: r.content }));
+  return { history, horizon };
 }
 
 /**
@@ -66,15 +87,21 @@ export async function getRecentMessages(
  * fresh reply every time, double-DMing the user. We can't dedupe by
  * `discord_message_id` yet (no column), so we approximate by checking
  * whether the same `(channel_id, user, content)` tuple was just persisted.
+ *
+ * Tunable via `DEDUP_WINDOW_SECONDS` env. Default 30s.
  */
-const DEDUP_WINDOW_SECONDS = 30;
+const DEDUP_WINDOW_SECONDS =
+  Number(process.env.DEDUP_WINDOW_SECONDS) || 30;
 
 /**
  * Per-user rate limit. Counts only USER turns (not assistants) so the bot
  * doesn't rate-limit itself. Conservative enough for legit conversation,
  * tight enough to bound denial-of-wallet.
+ *
+ * Tunable via `RATE_LIMIT_USER_TURNS_PER_MINUTE` env. Default 15.
  */
-const RATE_LIMIT_USER_TURNS_PER_MINUTE = 15;
+const RATE_LIMIT_USER_TURNS_PER_MINUTE =
+  Number(process.env.RATE_LIMIT_USER_TURNS_PER_MINUTE) || 15;
 
 /** Has this exact user message been persisted in the dedup window? */
 export async function isDuplicateUserMessage(
@@ -83,15 +110,15 @@ export async function isDuplicateUserMessage(
   content: string
 ): Promise<boolean> {
   const rows = (await sql`
-    SELECT 1 AS hit
+    SELECT 1
     FROM conversation_messages
     WHERE channel_id = ${channelId}
       AND discord_user_id = ${discordUserId}
       AND role = 'user'
       AND content = ${content}
-      AND created_at > now() - (${DEDUP_WINDOW_SECONDS} || ' seconds')::interval
+      AND created_at > now() - make_interval(secs => ${DEDUP_WINDOW_SECONDS})
     LIMIT 1
-  `) as Array<{ hit: number }>;
+  `) as Array<unknown>;
   return rows.length > 0;
 }
 

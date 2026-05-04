@@ -4,7 +4,7 @@ description: Threshold tuning currently requires a code edit + redeploy. Plus, a
 type: code-review
 issue_id: 030
 priority: p3
-status: pending
+status: complete
 tags: [code-review, ops, observability]
 ---
 
@@ -62,7 +62,11 @@ Both. Each is a 3-line change.
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Fixed in PR #10 follow-up.
+
+- `DEDUP_WINDOW_SECONDS` now reads from `process.env.DEDUP_WINDOW_SECONDS`, defaulting to 30. Both Vercel + Railway need to set the same value to behave consistently.
+- `RATE_LIMIT_USER_TURNS_PER_MINUTE` now reads from env, defaulting to 15.
+- Worker has `process.on("unhandledRejection", ...)` (logs and continues) and `process.on("uncaughtException", ...)` (logs and exits 1, since non-async throws aren't safely recoverable). Both prefixed `[gateway-worker]` so they're findable in Railway logs.
 
 ## Resources
 

@@ -4,7 +4,7 @@ description: Railway sends SIGTERM on every redeploy. Current shutdown doesn't a
 type: code-review
 issue_id: 021
 priority: p2
-status: pending
+status: complete
 tags: [code-review, reliability, ops]
 ---
 
@@ -82,7 +82,7 @@ Recommended option. Pair with todo 024 (generateText timeout) — bounds worst-c
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Fixed in PR #10 follow-up. Worker now tracks `inFlight` count via increment/decrement in each handler's try/finally. Both handlers bail at entry if `isShuttingDown`. Shutdown handler is now async, awaits `client.destroy()` (so the WebSocket close frame flushes), then drains for up to 25s (`SHUTDOWN_DRAIN_MS`) waiting for in-flight handlers to complete. Logs the surviving in-flight count if drain timeout hits. Paired with todo 024 (60s generateText timeout), so an in-flight handler can't outlive the drain budget.
 
 ## Resources
 

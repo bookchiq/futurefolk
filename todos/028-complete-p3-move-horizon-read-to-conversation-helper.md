@@ -4,7 +4,7 @@ description: Worker has an inline SQL query for horizon recovery. Moving to a na
 type: code-review
 issue_id: 028
 priority: p3
-status: pending
+status: complete
 tags: [code-review, architecture, refactor]
 ---
 
@@ -55,7 +55,7 @@ Do todo 025 instead — it both moves the query and folds it into `getRecentMess
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Subsumed by todo 025. The inline horizon SELECT in `scripts/gateway-worker.ts` is gone; horizon now comes from `getRecentMessagesAndHorizon` in `lib/conversation.ts`. No queries against `conversation_messages` remain outside that module.
 
 ## Resources
 
