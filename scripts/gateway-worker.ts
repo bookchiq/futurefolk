@@ -33,6 +33,7 @@ import {
 } from "../lib/conversation";
 import { sql } from "../lib/db";
 import { getVoiceProfile, type Horizon } from "../lib/voice-profile";
+import { scrubForPromptInterpolation } from "../lib/voice";
 
 const HOURGLASS = "⏳";
 const REACTION_DEFAULT_HORIZON: Horizon = "1y";
@@ -67,19 +68,34 @@ client.on(Events.MessageCreate, async (msg: Message) => {
     const userId = msg.author.id;
     const text = msg.content;
 
-    // Dedup against Discord MESSAGE_CREATE redelivery (which happens when
-    // the worker reconnects with an unacknowledged session).
-    if (await isDuplicateUserMessage(channelId, userId, text)) {
-      console.log(
-        `[gateway-worker] DM duplicate, skipping: ${userId} ${text.slice(0, 40)}`
-      );
-      return;
-    }
-
+    // Rate-limit BEFORE dedup. Otherwise a flood of identical messages hits
+    // the dedup short-circuit, never persists, and the rate counter (which
+    // counts persisted user rows) never increments — duplicate-spam slips
+    // through unbounded.
     if (await isRateLimited(userId)) {
       console.log(`[gateway-worker] DM rate-limited, dropping: ${userId}`);
       // Silent drop — no DM back, since a rate-limited user is probably
       // hostile or accidental and either way the right move is restraint.
+      return;
+    }
+
+    // Dedup against Discord MESSAGE_CREATE redelivery (which happens when
+    // the worker reconnects with an unacknowledged session).
+    if (await isDuplicateUserMessage(channelId, userId, text)) {
+      console.log(`[gateway-worker] DM duplicate, skipping: ${userId}`);
+      return;
+    }
+
+    // Onboarding gate. Mirrors the reaction handler — un-onboarded users
+    // should not receive a bot-initiated DM (Discord anti-spam stance), and
+    // the soft-fail string in lib/future-self.ts would otherwise reach them
+    // here on a continuation if they were ever DM'd before their profile
+    // was created/restored.
+    const profile = await getVoiceProfile(userId);
+    if (!profile) {
+      console.log(
+        `[gateway-worker] DM from un-onboarded user ${userId}, ignoring`
+      );
       return;
     }
 
@@ -185,8 +201,12 @@ client.on(
       const dm = await fullUser.createDM();
 
       // Persist user turn before generation so a crash mid-call doesn't lose
-      // the reacted-message context.
-      await appendMessage(dm.id, fullUser.id, horizon, "user", promptText);
+      // the reacted-message context. Scrub the reacted text before persisting
+      // — otherwise an attacker's reacted-message body sits in the DM history
+      // and re-injects on every subsequent continuation turn (cross-context
+      // injection vector). Scrub matches what the system prompt sees.
+      const persistedText = scrubForPromptInterpolation(promptText);
+      await appendMessage(dm.id, fullUser.id, horizon, "user", persistedText);
 
       const reply = await generateFutureSelfResponse({
         discordUserId: fullUser.id,
