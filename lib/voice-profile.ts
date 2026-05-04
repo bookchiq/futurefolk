@@ -14,6 +14,7 @@ import { sql } from "./db";
 import type { OnboardingResponses } from "@/app/onboarding/types";
 import { extractStyleFeatures, type StyleFeatures } from "./style-features";
 import { extractFewShotPairs, type FewShotPair } from "./few-shot-pairs";
+import { splitSampleMessages } from "./parse-sample-messages";
 
 export type Horizon = "1y" | "5y";
 
@@ -87,26 +88,9 @@ export function buildVoiceProfileFromResponses(
   };
 }
 
-function splitSampleMessages(blob: string): string[] {
-  const trimmed = blob.trim();
-  if (!trimmed) return [];
-
-  // Prefer blank-line separators when the user used them.
-  const byBlankLine = trimmed
-    .split(/\n\s*\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (byBlankLine.length > 1) return byBlankLine;
-
-  // Fall back to one-message-per-line.
-  const byLine = trimmed
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (byLine.length > 0) return byLine;
-
-  return [trimmed];
-}
+// `splitSampleMessages` extracted to `./parse-sample-messages` so the
+// onboarding survey page can call it client-side for live preview without
+// importing this server-only module (which depends on `sql` from `./db`).
 
 /**
  * Look up the saved voice profile for a Discord user. Returns null if not

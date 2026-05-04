@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useOnboarding } from "../context";
 import { REQUIRED_QUESTIONS, OnboardingResponses } from "../types";
 import { QuestionScreen } from "./question-screen";
+import { SampleMessagesPreview } from "./sample-messages-preview";
 
 export default function VoiceQuestionsPage() {
   const router = useRouter();
@@ -50,6 +51,15 @@ export default function VoiceQuestionsPage() {
 
   const canContinue = localValue.trim().length > 0;
 
+  // Sample messages is the one question where the parser meaningfully
+  // transforms the user's input — show a live preview of how their paste
+  // will be split into discrete messages so they can catch surprises (e.g.
+  // multi-line messages collapsing into one).
+  const belowInput =
+    currentQuestion.id === "sampleMessages" ? (
+      <SampleMessagesPreview value={localValue} />
+    ) : undefined;
+
   return (
     <QuestionScreen
       questionNumber={currentIndex + 1}
@@ -64,6 +74,7 @@ export default function VoiceQuestionsPage() {
       canContinue={canContinue}
       isFirst={currentIndex === 0}
       isLast={currentIndex === totalQuestions - 1}
+      belowInput={belowInput}
     />
   );
 }
