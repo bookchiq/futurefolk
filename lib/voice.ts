@@ -375,7 +375,7 @@ export function scrubForPromptInterpolation(input: string): string {
 }
 
 export function buildTriggerContext(args: {
-  trigger: "slash" | "reaction" | "continuation";
+  trigger: "slash" | "reaction" | "continuation" | "preview";
   topic?: string;
   reactedMessage?: string;
 }): string {
@@ -393,5 +393,7 @@ export function buildTriggerContext(args: {
     }
     case "continuation":
       return `This is a continuing DM conversation. The prior turns are in the message history. Respond to their latest message in context.`;
+    case "preview":
+      return `This is the very first message they will see from you — a one-off preview rendered on the website right after they finished onboarding. They haven't asked you anything specific yet; you are introducing yourself by reflecting briefly on the season of life they described in the onboarding context above. Speak to that, in their voice, in three to five sentences. Do not explain that this is a preview. Do not announce yourself ("Hi, I'm your future self!"). Do not ask a follow-up question or invite a reply — they will go to Discord next. Say something honest about how this stretch tends to look from a year (or five) further along, then let it sit.`;
   }
 }

@@ -55,7 +55,7 @@ interface GenerateOpts {
   /** Prior turns in this DM thread (oldest → newest), excluding `prompt`. */
   history?: ConversationTurn[];
   /** How this conversation got started — affects opening line framing. */
-  trigger: "slash" | "reaction" | "continuation";
+  trigger: "slash" | "reaction" | "continuation" | "preview";
 }
 
 export async function generateFutureSelfResponse(
@@ -73,6 +73,9 @@ export async function generateFutureSelfResponse(
     trigger: opts.trigger,
     topic: opts.trigger === "slash" ? opts.prompt : undefined,
     reactedMessage: opts.trigger === "reaction" ? opts.prompt : undefined,
+    // "preview" and "continuation" don't take a topic/reacted-message — the
+    // trigger context for those references onboarding context / message
+    // history directly.
   });
 
   const systemPrompt = buildSystemPrompt(
