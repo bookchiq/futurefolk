@@ -81,10 +81,18 @@ bot.onSlashCommand("/futureself", async (event) => {
     );
   }
 
-  // Open DM, generate, post, persist. Conversation history is keyed by the
-  // DM channel ID; the Railway gateway worker reads it back when handling
-  // continuation messages.
+  // Open DM, persist user turn, generate, post, persist assistant turn.
+  // Conversation history is keyed by the raw Discord channel ID so the
+  // Railway gateway worker (which uses discord.js, not ChatSDK) can read it
+  // back. Use `dm.channelId`, not `dm.id` — the latter is ChatSDK's encoded
+  // form `discord:@me:<channelId>` and would not match `msg.channelId` from
+  // the worker's perspective.
   const dm = await bot.openDM(event.user);
+  const channelId = dm.channelId;
+
+  // Persist the user turn before generation so a crash mid-call doesn't lose
+  // the question.
+  await appendMessage(channelId, event.user.userId, horizon, "user", about);
 
   const reply = await generateFutureSelfResponse({
     discordUserId: event.user.userId,
@@ -95,8 +103,7 @@ bot.onSlashCommand("/futureself", async (event) => {
 
   await dm.post(reply);
 
-  await appendMessage(dm.id, event.user.userId, horizon, "user", about);
-  await appendMessage(dm.id, event.user.userId, horizon, "assistant", reply);
+  await appendMessage(channelId, event.user.userId, horizon, "assistant", reply);
 });
 
 // ---------------------------------------------------------------------------

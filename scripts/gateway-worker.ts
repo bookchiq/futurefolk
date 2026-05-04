@@ -77,7 +77,13 @@ client.on(Events.MessageCreate, async (msg: Message) => {
 
     await msg.channel.sendTyping().catch(() => undefined);
 
+    // Read history BEFORE persisting the new user turn — the model's
+    // `prompt` argument carries the new turn separately.
     const history = await getRecentMessages(channelId, 20);
+
+    // Persist the user turn before generation so a crash mid-call doesn't
+    // lose the question.
+    await appendMessage(channelId, userId, horizon, "user", text);
 
     const reply = await generateFutureSelfResponse({
       discordUserId: userId,
@@ -89,7 +95,6 @@ client.on(Events.MessageCreate, async (msg: Message) => {
 
     await msg.channel.send(reply);
 
-    await appendMessage(channelId, userId, horizon, "user", text);
     await appendMessage(channelId, userId, horizon, "assistant", reply);
 
     console.log(`[gateway-worker] DM replied (${reply.length} chars)`);
@@ -141,6 +146,10 @@ client.on(
       const fullUser = user.partial ? await user.fetch() : user;
       const dm = await fullUser.createDM();
 
+      // Persist user turn before generation so a crash mid-call doesn't lose
+      // the reacted-message context.
+      await appendMessage(dm.id, fullUser.id, horizon, "user", promptText);
+
       const reply = await generateFutureSelfResponse({
         discordUserId: fullUser.id,
         horizon,
@@ -150,7 +159,6 @@ client.on(
 
       await dm.send(reply);
 
-      await appendMessage(dm.id, fullUser.id, horizon, "user", promptText);
       await appendMessage(dm.id, fullUser.id, horizon, "assistant", reply);
 
       console.log(`[gateway-worker] reaction replied (${reply.length} chars)`);
