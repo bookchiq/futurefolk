@@ -23,6 +23,11 @@ import { cookies } from "next/headers";
 import { promotePendingToUser } from "@/lib/voice-profile";
 
 const PENDING_COOKIE = "ff_pending_session";
+const USER_ID_COOKIE = "ff_user_id";
+// Short-lived; just enough to render the first-run preview on /onboarding/done
+// and any quick retry. Not a session token — the bot is keyed off Discord IDs
+// directly and there's no long-lived signed-in state here.
+const USER_ID_COOKIE_MAX_AGE_SECONDS = 60 * 60; // 1 hour
 
 interface DiscordTokenResponse {
   access_token: string;
@@ -179,5 +184,19 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  return NextResponse.redirect(new URL("/onboarding/done", request.url));
+  // Set a short-lived cookie so /onboarding/done knows which Discord user
+  // this is and can render a first-run preview of their future-self voice.
+  // Set on the response (rather than via cookieStore.set above) so the
+  // browser commits it as part of the redirect.
+  const response = NextResponse.redirect(
+    new URL("/onboarding/done", request.url)
+  );
+  response.cookies.set(USER_ID_COOKIE, user.id, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: USER_ID_COOKIE_MAX_AGE_SECONDS,
+  });
+  return response;
 }

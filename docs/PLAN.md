@@ -92,9 +92,9 @@ Status legend: `[ ]` not started • `[~]` in progress • `[x]` done
 
 ## P7. First-run preview on `/onboarding/done`
 
-- [ ] Generate a 1y-future-self response to a generic prompt using the just-built profile
-- [ ] Render on the done page with a "sound right?" frame
-- [ ] Thumbs-up / thumbs-down. Down → link to `/profile`
+- [x] Generate a 1y-future-self response (new `"preview"` trigger context that reflects on the user's stated season of life — no question to invent)
+- [x] Render on the done page above the existing "What to try first" block, with a graceful loading state and a hide-on-error fallback
+- [ ] Thumbs-up / thumbs-down. Down → link to `/profile` (deferred — `/profile` is P6 and unbuilt)
 
 ## P8. Scheduled check-ins via Workflow SDK
 

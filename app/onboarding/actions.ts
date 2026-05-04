@@ -24,10 +24,12 @@ import {
   savePendingProfile,
 } from "@/lib/voice-profile";
 import { extractStyleFeatures } from "@/lib/style-features";
+import { generateFutureSelfResponse } from "@/lib/future-self";
 import { sql } from "@/lib/db";
 import type { OnboardingResponses } from "./types";
 
 const PENDING_COOKIE = "ff_pending_session";
+const USER_ID_COOKIE = "ff_user_id";
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24; // 24h is plenty for "fill out form, hit Discord OAuth, return".
 
 export async function submitOnboardingResponses(
@@ -111,4 +113,48 @@ export async function submitOnboardingResponses(
   }
 
   return { ok: true };
+}
+
+/**
+ * Generate a one-off "first-run preview" response for the
+ * /onboarding/done page. Reads the Discord user ID from the short-lived
+ * `ff_user_id` cookie set by the OAuth callback, looks up the freshly-built
+ * voice profile, and asks the model to introduce itself by reflecting on
+ * their stated season of life.
+ *
+ * Cost: one (or two, if the tell-detector regen fires) Sonnet call. May
+ * also trigger the lazy stylometric backfill in `getVoiceProfile` if the
+ * background extraction from `submitOnboardingResponses` lost the race
+ * with OAuth — in that case the first call here pays a one-time
+ * ~5-15s extraction cost on top of generation.
+ */
+export async function generateOnboardingPreview(): Promise<
+  { ok: true; reply: string } | { ok: false; reason: string }
+> {
+  const cookieStore = await cookies();
+  const userId = cookieStore.get(USER_ID_COOKIE)?.value;
+  if (!userId) {
+    return { ok: false, reason: "no-user-cookie" };
+  }
+
+  try {
+    const reply = await generateFutureSelfResponse({
+      discordUserId: userId,
+      // 1y feels closer-to-present and more accessible for a first
+      // impression than 5y. Both horizons read the same voice profile and
+      // structured features; only the overlay differs.
+      horizon: "1y",
+      // Preview trigger context doesn't reference `prompt` — pass an empty
+      // string so the buildMessages helper still puts a (blank) user turn
+      // at the end. The system prompt's preview trigger context tells the
+      // model to introduce itself by reflecting on the season of life
+      // already in the onboarding context.
+      prompt: "",
+      trigger: "preview",
+    });
+    return { ok: true, reply };
+  } catch (err) {
+    console.error("[Futurefolk] preview generation failed:", err);
+    return { ok: false, reason: "generation-failed" };
+  }
 }
