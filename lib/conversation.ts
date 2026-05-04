@@ -57,3 +57,52 @@ export async function getRecentMessages(
 
   return rows.reverse().map((r) => ({ role: r.role, content: r.content }));
 }
+
+/**
+ * Dedup window for Discord MESSAGE_CREATE redelivery.
+ *
+ * If the worker reconnects with an unacknowledged session, Discord will
+ * redeliver the same Gateway event. Without dedup the worker generates a
+ * fresh reply every time, double-DMing the user. We can't dedupe by
+ * `discord_message_id` yet (no column), so we approximate by checking
+ * whether the same `(channel_id, user, content)` tuple was just persisted.
+ */
+const DEDUP_WINDOW_SECONDS = 30;
+
+/**
+ * Per-user rate limit. Counts only USER turns (not assistants) so the bot
+ * doesn't rate-limit itself. Conservative enough for legit conversation,
+ * tight enough to bound denial-of-wallet.
+ */
+const RATE_LIMIT_USER_TURNS_PER_MINUTE = 15;
+
+/** Has this exact user message been persisted in the dedup window? */
+export async function isDuplicateUserMessage(
+  channelId: string,
+  discordUserId: string,
+  content: string
+): Promise<boolean> {
+  const rows = (await sql`
+    SELECT 1 AS hit
+    FROM conversation_messages
+    WHERE channel_id = ${channelId}
+      AND discord_user_id = ${discordUserId}
+      AND role = 'user'
+      AND content = ${content}
+      AND created_at > now() - (${DEDUP_WINDOW_SECONDS} || ' seconds')::interval
+    LIMIT 1
+  `) as Array<{ hit: number }>;
+  return rows.length > 0;
+}
+
+/** Is this user above the per-minute user-turn rate limit? */
+export async function isRateLimited(discordUserId: string): Promise<boolean> {
+  const rows = (await sql`
+    SELECT count(*)::int AS cnt
+    FROM conversation_messages
+    WHERE discord_user_id = ${discordUserId}
+      AND role = 'user'
+      AND created_at > now() - interval '1 minute'
+  `) as Array<{ cnt: number }>;
+  return (rows[0]?.cnt ?? 0) >= RATE_LIMIT_USER_TURNS_PER_MINUTE;
+}

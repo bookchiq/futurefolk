@@ -24,7 +24,7 @@ import { createMemoryState } from "@chat-adapter/state-memory";
 
 import { type Horizon } from "./voice-profile";
 import { generateFutureSelfResponse } from "./future-self";
-import { appendMessage } from "./conversation";
+import { appendMessage, isRateLimited } from "./conversation";
 
 // Discord adapter auto-detects DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, and
 // DISCORD_APPLICATION_ID. Sarah's env uses DISCORD_APP_ID (per SETUP.md), so we
@@ -62,6 +62,19 @@ bot.onSlashCommand("/futureself", async (event) => {
     await event.channel.postEphemeral(
       event.user,
       "Need an `about:` — what do you want to talk to future-you about?",
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
+  if (await isRateLimited(event.user.userId)) {
+    console.log(
+      "[Futurefolk] /futureself rate-limited",
+      event.user.userId,
+    );
+    await event.channel.postEphemeral(
+      event.user,
+      "you're moving fast. give it a minute and try again.",
       { fallbackToDM: true },
     );
     return;

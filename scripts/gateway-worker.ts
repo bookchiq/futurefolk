@@ -25,9 +25,14 @@ import {
 } from "discord.js";
 
 import { generateFutureSelfResponse } from "../lib/future-self";
-import { appendMessage, getRecentMessages } from "../lib/conversation";
+import {
+  appendMessage,
+  getRecentMessages,
+  isDuplicateUserMessage,
+  isRateLimited,
+} from "../lib/conversation";
 import { sql } from "../lib/db";
-import type { Horizon } from "../lib/voice-profile";
+import { getVoiceProfile, type Horizon } from "../lib/voice-profile";
 
 const HOURGLASS = "⏳";
 const REACTION_DEFAULT_HORIZON: Horizon = "1y";
@@ -61,6 +66,22 @@ client.on(Events.MessageCreate, async (msg: Message) => {
     const channelId = msg.channelId;
     const userId = msg.author.id;
     const text = msg.content;
+
+    // Dedup against Discord MESSAGE_CREATE redelivery (which happens when
+    // the worker reconnects with an unacknowledged session).
+    if (await isDuplicateUserMessage(channelId, userId, text)) {
+      console.log(
+        `[gateway-worker] DM duplicate, skipping: ${userId} ${text.slice(0, 40)}`
+      );
+      return;
+    }
+
+    if (await isRateLimited(userId)) {
+      console.log(`[gateway-worker] DM rate-limited, dropping: ${userId}`);
+      // Silent drop — no DM back, since a rate-limited user is probably
+      // hostile or accidental and either way the right move is restraint.
+      return;
+    }
 
     // Pull the horizon from the most recent persisted turn so 5y stays 5y.
     const rows = (await sql`
@@ -143,6 +164,23 @@ client.on(
         `[gateway-worker] ⏳ reaction by ${user.id}: ${reactedText.slice(0, 80)}`
       );
 
+      // Onboarding gate: don't open a DM with users who haven't built a
+      // voice profile. Otherwise we'd send them an unsolicited
+      // "you haven't onboarded" DM, which violates Discord's anti-spam
+      // stance and exposes the bot in environments Sarah doesn't control.
+      const profile = await getVoiceProfile(user.id);
+      if (!profile) {
+        console.log(
+          `[gateway-worker] reaction from un-onboarded user ${user.id}, ignoring`
+        );
+        return;
+      }
+
+      if (await isRateLimited(user.id)) {
+        console.log(`[gateway-worker] reaction rate-limited: ${user.id}`);
+        return;
+      }
+
       const fullUser = user.partial ? await user.fetch() : user;
       const dm = await fullUser.createDM();
 
@@ -167,6 +205,25 @@ client.on(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown
+// ---------------------------------------------------------------------------
+
+let isShuttingDown = false;
+const shutdown = (signal: string) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`[gateway-worker] received ${signal}, shutting down`);
+  // discord.js's destroy() closes the WebSocket cleanly. We don't await
+  // in-flight handlers because they each have their own try/catch and the
+  // DB writes inside them complete fast enough that the SIGTERM grace
+  // window typically covers them.
+  client.destroy();
+  process.exit(0);
+};
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 // ---------------------------------------------------------------------------
 // Boot
