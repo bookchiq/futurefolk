@@ -1,8 +1,10 @@
 /**
- * ChatSDK bot instance for Futurefolk.
+ * Slash command handler — `/futureself` invocations only.
  *
- * Scoped to slash command handling only. The HTTP Interactions endpoint at
- * app/api/webhooks/discord/route.ts dispatches into this module.
+ * Mounted by `app/api/webhooks/discord/route.ts` against ChatSDK's Discord
+ * webhook (HTTP Interactions endpoint). The ChatSDK `Chat` instance lives
+ * here because it's required for slash command dispatch + Ed25519 signature
+ * verification, but its Gateway-side handlers are deliberately not registered.
  *
  * Gateway-side triggers (DM continuations, ⏳ reactions) live in
  * scripts/gateway-worker.ts using discord.js directly. They were previously
@@ -15,7 +17,7 @@
  * Conversation memory is persisted to Postgres keyed by Discord channel ID
  * (lib/conversation.ts). The ChatSDK in-memory state adapter is required by
  * the Chat constructor's type signature but is otherwise unused.
- * See .v0/findings.md for the detailed split.
+ * See .v0/findings.md for the detailed split rationale.
  */
 
 import { Chat } from "chat";

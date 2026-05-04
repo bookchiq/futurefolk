@@ -140,44 +140,59 @@ export function buildSystemPrompt(
 function formatVoiceProfile(profile: VoiceProfile): string {
   const parts: string[] = [];
 
-  if (profile.overusedPhrase) {
+  // Every interpolated value below is user-supplied (from the onboarding
+  // survey). It's self-attack only today — but embedded `"` or `\n` chars
+  // could still break the surrounding quote/structure of the prompt. Run
+  // them through the same scrubber the trigger context uses so the boundary
+  // stays intact. The static prefix labels (e.g., "A phrase they catch
+  // themselves using too much:") are plain prose under our control and are
+  // intentionally NOT scrubbed.
+  const overusedPhrase = scrubForPromptInterpolation(profile.overusedPhrase);
+  if (overusedPhrase) {
     parts.push(
-      `A phrase they catch themselves using too much: "${profile.overusedPhrase}". Don't lean on it heavily, but it's a real part of their voice — using it once is fine.`
+      `A phrase they catch themselves using too much: "${overusedPhrase}". Don't lean on it heavily, but it's a real part of their voice — using it once is fine.`
     );
   }
 
-  if (profile.badNewsExample) {
+  const badNewsExample = scrubForPromptInterpolation(profile.badNewsExample);
+  if (badNewsExample) {
     parts.push(
-      `When they have to deliver bad news, this is roughly how they soften it:\n"${profile.badNewsExample}"\nNotice the register. Match it when the conversation calls for it.`
+      `When they have to deliver bad news, this is roughly how they soften it:\n"${badNewsExample}"\nNotice the register. Match it when the conversation calls for it.`
     );
   }
 
-  if (profile.changedBelief) {
+  const changedBelief = scrubForPromptInterpolation(profile.changedBelief);
+  if (changedBelief) {
     parts.push(
-      `Something they used to believe and don't anymore: ${profile.changedBelief}`
+      `Something they used to believe and don't anymore: ${changedBelief}`
     );
   }
 
-  if (profile.hillIdDieOn) {
+  const hillIdDieOn = scrubForPromptInterpolation(profile.hillIdDieOn);
+  if (hillIdDieOn) {
     parts.push(
-      `A hill they will die on that most people don't agree with: ${profile.hillIdDieOn}`
+      `A hill they will die on that most people don't agree with: ${hillIdDieOn}`
     );
   }
 
-  if (profile.notSoundingLike) {
+  const notSoundingLike = scrubForPromptInterpolation(profile.notSoundingLike);
+  if (notSoundingLike) {
     parts.push(
-      `Who they are actively trying NOT to sound like: ${profile.notSoundingLike}. Avoid that register entirely. Do not impersonate or invoke that voice.`
+      `Who they are actively trying NOT to sound like: ${notSoundingLike}. Avoid that register entirely. Do not impersonate or invoke that voice.`
     );
   }
 
   if (profile.sampleMessages.length > 0) {
     const sample = profile.sampleMessages
       .slice(0, 12)
-      .map((m) => `- "${m.replace(/\n+/g, " ")}"`)
+      .map((m) => `- "${scrubForPromptInterpolation(m)}"`)
+      .filter((line) => line !== `- ""`)
       .join("\n");
-    parts.push(
-      `Recent messages they've actually sent to friends. Use these as the cadence reference — sentence length, capitalization habits, punctuation style, idiom. Do not quote them, do not paraphrase them; absorb the rhythm:\n${sample}`
-    );
+    if (sample) {
+      parts.push(
+        `Recent messages they've actually sent to friends. Use these as the cadence reference — sentence length, capitalization habits, punctuation style, idiom. Do not quote them, do not paraphrase them; absorb the rhythm:\n${sample}`
+      );
+    }
   }
 
   if (parts.length === 0) {
@@ -190,15 +205,20 @@ function formatVoiceProfile(profile: VoiceProfile): string {
 function formatOnboardingContext(profile: VoiceProfile): string {
   const parts: string[] = [];
 
-  if (profile.seasonOfLife) {
+  // Same reasoning as formatVoiceProfile: scrub user-supplied values, leave
+  // the static prefix labels alone.
+  const seasonOfLife = scrubForPromptInterpolation(profile.seasonOfLife);
+  if (seasonOfLife) {
     parts.push(
-      `The season of life they say they're in right now, in their own words: ${profile.seasonOfLife}`
+      `The season of life they say they're in right now, in their own words: ${seasonOfLife}`
     );
   }
 
   for (const [key, value] of Object.entries(profile.optional)) {
+    const scrubbed = scrubForPromptInterpolation(value);
+    if (!scrubbed) continue;
     const label = OPTIONAL_QUESTION_LABELS[key] ?? key;
-    parts.push(`${label}: ${value}`);
+    parts.push(`${label}: ${scrubbed}`);
   }
 
   if (parts.length === 0) {

@@ -15,6 +15,8 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Couldn't exchange the Discord code for a token. Try again.",
   user_fetch_failed:
     "Got a token from Discord but couldn't read your profile. Try again.",
+  no_pending:
+    "It looks like the survey wasn't completed. Go through the onboarding questions first, then come back to connect Discord.",
 };
 
 // Reads ?error=... from the URL. Lives in its own component so the parent

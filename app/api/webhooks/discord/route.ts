@@ -3,7 +3,7 @@
  *
  * Today this only serves HTTP Interactions — slash commands, button clicks,
  * and the initial PING verification. ChatSDK's Discord adapter verifies the
- * Ed25519 signature and routes to the right handler in lib/bot.ts.
+ * Ed25519 signature and routes to the right handler in lib/slash-command.ts.
  *
  * The same endpoint is also designed to receive forwarded Gateway events
  * (regular messages, reactions) once a Gateway worker exists. That worker is
@@ -15,7 +15,7 @@
  */
 
 import { after } from "next/server";
-import { bot } from "@/lib/bot";
+import { bot } from "@/lib/slash-command";
 
 // The Discord adapter pulls in discord.js for the Gateway side, so this route
 // must run on the Node runtime, not Edge.

@@ -4,7 +4,7 @@ description: Self-attack only / low-severity items from the security review. Nic
 type: code-review
 issue_id: 012
 priority: p3
-status: pending
+status: complete
 tags: [code-review, security, defense-in-depth]
 ---
 
@@ -65,7 +65,10 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agent (Wave 4 of /resolve_todo_parallel). 12a (cookie prefix) skipped per the recommended action (existing cookie security is sufficient).
+
+- **12b (Discord OAuth log redaction)**: `app/api/auth/discord/callback/route.ts:115, 136` no longer log Discord API response bodies on token-exchange or user-fetch failures. Status code only.
+- **12c (voice profile field escaping)**: `lib/voice.ts::formatVoiceProfile` and `formatOnboardingContext` now apply `scrubForPromptInterpolation` to all user-controlled values before interpolation. Static prefix labels left alone. Sample messages with empty post-scrub values are filtered out.
 
 ## Resources
 

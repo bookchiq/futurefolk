@@ -4,7 +4,7 @@ description: PLAN.md duplicates STRATEGY-REVIEW.md prose with checkboxes. Trim t
 type: code-review
 issue_id: 010
 priority: p3
-status: pending
+status: complete
 tags: [code-review, documentation, simplicity]
 ---
 
@@ -53,7 +53,11 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Resolved by parallel agent (Wave 4 of /resolve_todo_parallel).
+
+- `docs/` directory created.
+- `PLAN.md` → `docs/PLAN.md` via git mv. Pruned from ~162 lines to ~95 (mostly checklist now). All complete-status todos marked `[x]`. "What we are NOT doing" section replaced with one-liner pointing at `.v0/instructions.md`.
+- `STRATEGY-REVIEW.md` → `docs/STRATEGY-REVIEW.md` via git mv. Snapshot header added at top noting "2026-05-03" and that line refs may rot. Section 2 line refs corrected (also part of todo 007).
 
 ## Resources
 

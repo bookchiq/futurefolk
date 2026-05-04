@@ -4,7 +4,7 @@ description: Halve DB round-trips per DM (horizon+history in one query, single m
 type: code-review
 issue_id: 005
 priority: p2
-status: pending
+status: complete
 tags: [code-review, performance, database]
 ---
 
@@ -72,7 +72,12 @@ Affected files:
 
 ## Work Log
 
-(none yet)
+**2026-05-03** — Closed via Wave 2 + 3 work, with the fire-and-forget piece deliberately deferred.
+
+- **Horizon + history in one query**: DONE (Wave 2 todo 025). `getRecentMessagesAndHorizon` returns both in a single round-trip; both worker handlers use it.
+- **User-turn-before-generation reorder**: DONE (PR #9 todo 002). The two-INSERT race is moot because the user turn is now persisted before generation.
+- **Multi-row INSERT for both turns**: NOT NEEDED. Since user persists before generation, only the assistant turn writes after generation — single-row INSERT remains the right shape.
+- **Fire-and-forget assistant persistence**: DEFERRED. Skipping this part deliberately. The latency win is small (~30-100ms), and a fire-and-forget pattern conflicts with the SIGTERM drain in todo 021 — a dangling promise after the handler's `try/finally` would let `inFlight` decrement before the persist completes, so SIGTERM drain wouldn't wait for it. Trade-off favors data safety over latency at current scale.
 
 ## Resources
 

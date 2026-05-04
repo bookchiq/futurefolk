@@ -43,11 +43,6 @@ const MODEL = anthropic("claude-sonnet-4-6");
 // Match-length-of-user is enforced in the system prompt.
 const MAX_OUTPUT_TOKENS = 600;
 
-export interface FutureSelfTurn {
-  role: "user" | "assistant";
-  text: string;
-}
-
 interface GenerateOpts {
   /** Discord user ID — used to load voice profile from DB */
   discordUserId: string;
