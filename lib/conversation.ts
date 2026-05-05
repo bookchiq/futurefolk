@@ -38,20 +38,6 @@ export async function appendMessage(
 }
 
 /**
- * Load the most recent N turns for a thread, ordered oldest → newest (the
- * order the model expects). Default 20 turns is a comfortable balance —
- * Claude handles plenty more, but the system prompt is heavy and the voice
- * stays tighter when context doesn't bloat.
- */
-export async function getRecentMessages(
-  channelId: string,
-  limit = 20
-): Promise<ConversationTurn[]> {
-  const { history } = await getRecentMessagesAndHorizon(channelId, limit);
-  return history;
-}
-
-/**
  * Combined helper: load the most recent N turns AND the horizon used on the
  * most recent persisted row, in a single round-trip. The gateway worker uses
  * this on every DM continuation; the inline horizon SELECT it replaces was

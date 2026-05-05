@@ -81,6 +81,24 @@ CREATE INDEX IF NOT EXISTS scheduled_check_ins_user_status_idx
 
 The workflow itself runs as a durable Vercel Function — it sleeps until `scheduled_for` (the sleep survives deploys/restarts) then wakes, generates the check-in message, posts it via raw Discord REST API, and persists the assistant turn into `conversation_messages` so subsequent DM replies thread cleanly.
 
+## Debugging scheduled check-ins
+
+To answer "did user X's scheduled check-in fire correctly?" today, sweep four
+systems. There's no unified view yet — capture the steps so they're not
+re-derived under pressure.
+
+1. **Postgres** (source of truth for state):
+   ```sql
+   SELECT id, status, scheduled_for, sent_at, workflow_run_id, topic
+   FROM scheduled_check_ins
+   WHERE discord_user_id = '<id>'
+   ORDER BY scheduled_for DESC
+   LIMIT 20;
+   ```
+2. **`status = 'sent'`** — confirm DM landed: check Railway worker logs near `sent_at` for any DM continuation thread the user wrote in response.
+3. **`status = 'failed'`** — `npx workflow inspect run <workflow_run_id>` shows the failed step and error.
+4. **`status = 'pending'` past `scheduled_for`** — workflow may be stuck in storage. `npx workflow inspect run <workflow_run_id>` to confirm; if the run shows `cancelled` or `failed` but the row is still pending, that's a reconciler-needed case (see issue #041).
+
 ## Tunables (env vars)
 
 | Var | Default | Purpose |
@@ -109,3 +127,17 @@ The file declares:
 If you change Railway's UI overrides for Build/Start commands, the file's values take precedence on the next deploy. Either edit `railway.json` directly or rely on it being correct.
 
 If you ever provision a new Railway environment for this repo, the config travels with the code — no UI configuration is needed beyond setting the env vars.
+
+## Pre-launch readiness gaps
+
+Tracked here so the path from "friend-tester" to "small public beta" is visible.
+None are blocking today; revisit before opening more broadly.
+
+- [ ] **Stuck-workflow reconciler.** Periodic job to scan `pending` rows past `scheduled_for` and reconcile against `getRun(...).status`. (Tracked in todo #041 as the second half of cancellation completeness.)
+- [ ] **Per-user cost ceilings.** `isRateLimited` caps message count, not Anthropic tokens spent. A bad actor could chew through tokens via repeated profile edits (each save can trigger lazy re-extraction). Add a daily token budget per user.
+- [ ] **Migration system.** Schema changes are manual SQL on Neon today. Pick a tool (`drizzle-kit`, `node-pg-migrate`, or numbered `.sql` files + checksum) before a second person can deploy.
+- [ ] **Structured logging.** All logs are `console.log("[Futurefolk] ...")`. Aggregate-friendly JSON logs (with `event`, `user_id`, `horizon`) ship cleanly to Logflare/Axiom.
+- [ ] **Worker alerting.** Railway restarts on failure (10 retries) but nothing pages on sustained failure. A "did the worker log `connected as` in the last 10m?" healthcheck → email/Discord webhook would close it.
+- [ ] **PITR / backup.** `users.voice_profile` is irreplaceable per-user data. Confirm Neon PITR is on and test-restore at least once.
+- [ ] **Anthropic circuit breaker.** Sustained Anthropic outage would queue 60s timeouts in the worker, exhausting memory before Railway restart. A 30s circuit breaker that returns "future-self is taking a moment" would degrade gracefully.
+- [ ] **PII handling story.** Onboarding responses can contain personal reflection. No `DELETE my account` flow exists. Pre-launch checklist item.

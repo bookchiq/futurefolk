@@ -18,6 +18,7 @@ import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 
+import { MODEL_NAME } from "./future-self";
 import { buildSystemPrompt, buildTriggerContext } from "./voice";
 import type { VoiceProfile } from "./voice-profile";
 
@@ -93,7 +94,7 @@ export async function extractFewShotPairs(
   );
 
   const result = await generateObject({
-    model: anthropic("claude-sonnet-4-6"),
+    model: anthropic(MODEL_NAME),
     schema: FewShotPairsSchema,
     system: META_PROMPT_PREAMBLE + runtimeSystemPrompt,
     prompt:

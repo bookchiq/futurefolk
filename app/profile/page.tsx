@@ -34,6 +34,8 @@ export default async function ProfilePage() {
     return <SignInPrompt />;
   }
 
+  const { styleFeatures, fewShotPairs } = user.profile;
+
   return (
     <main className="min-h-screen px-6 pt-16 pb-32">
       <div className="max-w-2xl mx-auto space-y-8">
@@ -52,6 +54,42 @@ export default async function ProfilePage() {
         </header>
 
         <ProfileEditForm initial={user.rawResponses} />
+
+        <details className="mt-12 rounded-sm border border-border bg-bg-subtle p-6">
+          <summary className="cursor-pointer text-sm text-muted">
+            What future-you sees (advanced)
+          </summary>
+          <div className="mt-4 space-y-6 text-sm">
+            <div>
+              <h3 className="mb-2 text-base font-medium text-ink">
+                Style features
+              </h3>
+              {styleFeatures ? (
+                <pre className="overflow-x-auto rounded-sm border border-border-subtle bg-bg p-3 text-xs text-ink">
+                  {JSON.stringify(styleFeatures, null, 2)}
+                </pre>
+              ) : (
+                <p className="text-muted leading-relaxed">
+                  Still being extracted. Check back in a minute.
+                </p>
+              )}
+            </div>
+            <div>
+              <h3 className="mb-2 text-base font-medium text-ink">
+                Few-shot demo pairs
+              </h3>
+              {fewShotPairs ? (
+                <pre className="overflow-x-auto rounded-sm border border-border-subtle bg-bg p-3 text-xs text-ink">
+                  {JSON.stringify(fewShotPairs, null, 2)}
+                </pre>
+              ) : (
+                <p className="text-muted leading-relaxed">
+                  Still being generated. Check back in a minute.
+                </p>
+              )}
+            </div>
+          </div>
+        </details>
       </div>
     </main>
   );

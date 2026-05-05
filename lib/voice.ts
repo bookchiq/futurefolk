@@ -371,7 +371,7 @@ const MAX_TRIGGER_CONTEXT_LENGTH = 500;
  * Exported so callers persisting untrusted content (e.g., the gateway
  * worker's reaction handler) can apply the same scrub before
  * `appendMessage`, preventing the persisted row from re-injecting on a
- * later `getRecentMessages` replay.
+ * later `getRecentMessagesAndHorizon` replay.
  */
 export function scrubForPromptInterpolation(input: string): string {
   return input
