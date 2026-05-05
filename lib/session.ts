@@ -22,13 +22,22 @@
  * and /onboarding/done both treat the cookie as a session.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 
 // === Cookie names ===
 
-/** Discord-ID-as-session cookie. Set by OAuth callback, read by /profile + onboarding preview. */
-export const SESSION_COOKIE = "ff_user_id";
+/**
+ * Session cookie.
+ *
+ * Renamed from `ff_user_id` to avoid advertising what the value is. The
+ * value is no longer the bare Discord ID — it's `<discordUserId>.<HMAC>`
+ * signed with `SESSION_SIGNING_SECRET`. See `signSessionValue` /
+ * `verifySessionValue` below.
+ */
+export const SESSION_COOKIE = "ff_session";
 
 /** Pending-onboarding session id. Set by submitOnboardingResponses, doubles as OAuth state. */
 export const PENDING_COOKIE = "ff_pending_session";
@@ -46,6 +55,63 @@ export const PENDING_MAX_AGE_SECONDS = 60 * 60 * 24;
 
 /** Single-use across one OAuth round trip. */
 export const NEXT_MAX_AGE_SECONDS = 60 * 10;
+
+// === HMAC signing ===
+
+/**
+ * Read the session signing secret from env. Throws if missing — this is a
+ * critical security primitive; failing closed is the right move.
+ *
+ * Set in Vercel project env. The Railway worker doesn't read this — it
+ * doesn't serve HTTP and never reads/writes the session cookie.
+ */
+function getSigningSecret(): string {
+  const secret = process.env.SESSION_SIGNING_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "[Futurefolk] SESSION_SIGNING_SECRET must be set to at least 32 chars",
+    );
+  }
+  return secret;
+}
+
+function sign(value: string): string {
+  return createHmac("sha256", getSigningSecret()).update(value).digest("hex");
+}
+
+/** Encode `<discordUserId>.<HMAC>` for the session cookie value. */
+export function signSessionValue(discordUserId: string): string {
+  return `${discordUserId}.${sign(discordUserId)}`;
+}
+
+/**
+ * Verify a session cookie value and return the Discord ID, or null if the
+ * value is missing/malformed/tampered.
+ *
+ * Uses `timingSafeEqual` for the HMAC comparison so an attacker can't
+ * brute-force the signature byte-by-byte via timing leaks.
+ */
+export function verifySessionValue(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const dot = value.lastIndexOf(".");
+  if (dot <= 0 || dot === value.length - 1) return null;
+
+  const discordUserId = value.slice(0, dot);
+  const providedSignature = value.slice(dot + 1);
+
+  // Validate the discord ID shape before computing HMAC — defense in depth.
+  if (!/^\d{15,25}$/.test(discordUserId)) return null;
+
+  const expectedSignature = sign(discordUserId);
+  if (providedSignature.length !== expectedSignature.length) return null;
+
+  const a = Buffer.from(providedSignature, "hex");
+  const b = Buffer.from(expectedSignature, "hex");
+  if (a.length !== b.length) return null;
+  if (!timingSafeEqual(a, b)) return null;
+
+  return discordUserId;
+}
 
 // === Cookie security flags (one place to change) ===
 
@@ -80,12 +146,17 @@ export function sanitizeNext(value: string | null | undefined): string | null {
   return value;
 }
 
-// === Session cookie (Discord-ID-as-session) ===
+// === Session cookie (HMAC-signed Discord ID) ===
 
-/** Read the user's Discord ID from the session cookie, or null if unset/invalid. */
+/**
+ * Read the user's Discord ID from the session cookie, verifying the HMAC.
+ * Returns null if the cookie is missing, malformed, or the signature
+ * doesn't validate against `SESSION_SIGNING_SECRET`.
+ */
 export async function getSessionUserId(): Promise<string | null> {
   const cookieStore = await cookies();
-  return cookieStore.get(SESSION_COOKIE)?.value ?? null;
+  const raw = cookieStore.get(SESSION_COOKIE)?.value ?? null;
+  return verifySessionValue(raw);
 }
 
 /** Set the session cookie on a NextResponse (used by OAuth callback before redirect). */
@@ -95,7 +166,7 @@ export function setSessionUserIdOnResponse(
 ): void {
   response.cookies.set(
     SESSION_COOKIE,
-    userId,
+    signSessionValue(userId),
     baseCookieOptions(SESSION_MAX_AGE_SECONDS),
   );
 }
