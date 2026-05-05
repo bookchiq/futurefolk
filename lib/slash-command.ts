@@ -26,6 +26,7 @@ import { createMemoryState } from "@chat-adapter/state-memory";
 
 import { type Horizon } from "./voice-profile";
 import { generateFutureSelfResponse } from "./future-self";
+import { softScrubForHistory } from "./voice";
 import {
   appendMessage,
   isDuplicateUserMessage,
@@ -151,8 +152,15 @@ bot.onSlashCommand("/futureself", async (event) => {
   }
 
   // Persist the user turn before generation so a crash mid-call doesn't lose
-  // the question.
-  await appendMessage(channelId, event.user.userId, horizon, "user", about);
+  // the question. Soft scrub for parity with the worker DM + reaction
+  // paths — normalizes encoding without touching voice signal (issue #040).
+  await appendMessage(
+    channelId,
+    event.user.userId,
+    horizon,
+    "user",
+    softScrubForHistory(about)
+  );
 
   const reply = await generateFutureSelfResponse({
     discordUserId: event.user.userId,
