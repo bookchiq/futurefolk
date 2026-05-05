@@ -24,8 +24,6 @@ import { Chat } from "chat";
 import { createDiscordAdapter } from "@chat-adapter/discord";
 import { createMemoryState } from "@chat-adapter/state-memory";
 
-import { start } from "workflow/api";
-
 import { type Horizon } from "./voice-profile";
 import { generateFutureSelfResponse } from "./future-self";
 import {
@@ -33,8 +31,12 @@ import {
   isDuplicateUserMessage,
   isRateLimited,
 } from "./conversation";
-import { createScheduledCheckIn } from "./scheduled-check-ins";
-import { scheduledCheckInWorkflow } from "@/workflows/scheduled-check-in";
+import {
+  MAX_SCHEDULE_HORIZON_DAYS,
+  parseScheduleInput,
+  scheduleCheckIn,
+  validateScheduledFor,
+} from "./scheduled-check-ins";
 import { VERSION } from "./version";
 
 // Logged once per cold start so deploy drift between Vercel + Railway is
@@ -148,8 +150,6 @@ bot.onSlashCommand("/futureself", async (event) => {
 // Scheduled check-in path
 // ---------------------------------------------------------------------------
 
-const MAX_SCHEDULE_HORIZON_DAYS = 365;
-const MIN_SCHEDULE_FUTURE_MS = 60_000; // must be at least a minute in the future
 type SlashEvent = Parameters<Parameters<typeof bot.onSlashCommand>[1]>[0];
 
 async function handleScheduledInvocation(args: {
@@ -170,62 +170,30 @@ async function handleScheduledInvocation(args: {
     return;
   }
 
-  const now = Date.now();
-  if (scheduledFor.getTime() - now < MIN_SCHEDULE_FUTURE_MS) {
-    await event.channel.postEphemeral(
-      event.user,
-      "That schedule is in the past (or right now). Pick a date at least a minute out.",
-      { fallbackToDM: true },
-    );
+  const validation = validateScheduledFor(scheduledFor);
+  if (!validation.ok) {
+    const message =
+      validation.reason === "past"
+        ? "That schedule is in the past (or right now). Pick a date at least a minute out."
+        : `That's more than a year out. Try a date within ${MAX_SCHEDULE_HORIZON_DAYS} days.`;
+    await event.channel.postEphemeral(event.user, message, {
+      fallbackToDM: true,
+    });
     return;
   }
 
-  const maxFuture = now + MAX_SCHEDULE_HORIZON_DAYS * 24 * 60 * 60 * 1000;
-  if (scheduledFor.getTime() > maxFuture) {
-    await event.channel.postEphemeral(
-      event.user,
-      `That's more than a year out. Try a date within ${MAX_SCHEDULE_HORIZON_DAYS} days.`,
-      { fallbackToDM: true },
-    );
-    return;
-  }
-
-  let checkInId: number;
   try {
-    checkInId = await createScheduledCheckIn({
+    await scheduleCheckIn({
       discordUserId: event.user.userId,
       horizon,
       topic: about,
       scheduledFor,
     });
   } catch (err) {
-    console.error("[Futurefolk] /futureself: createScheduledCheckIn failed", err);
+    console.error("[Futurefolk] /futureself: scheduleCheckIn failed", err);
     await event.channel.postEphemeral(
       event.user,
       "Couldn't save the schedule. Try again in a moment.",
-      { fallbackToDM: true },
-    );
-    return;
-  }
-
-  try {
-    // Workflow self-records its run_id in its first step (issue #032), so
-    // we don't need to capture it here. The slash command just needs to
-    // know that start() succeeded.
-    await start(scheduledCheckInWorkflow, [
-      {
-        checkInId,
-        discordUserId: event.user.userId,
-        horizon,
-        topic: about,
-        scheduledForIso: scheduledFor.toISOString(),
-      },
-    ]);
-  } catch (err) {
-    console.error("[Futurefolk] /futureself: start workflow failed", err);
-    await event.channel.postEphemeral(
-      event.user,
-      "Couldn't start the scheduled workflow. Try again in a moment.",
       { fallbackToDM: true },
     );
     return;
@@ -237,20 +205,6 @@ async function handleScheduledInvocation(args: {
     `Scheduled. You, ${horizonLabel}, will DM you on ${formatScheduledDate(scheduledFor)} about: ${about}`,
     { fallbackToDM: true },
   );
-}
-
-function parseScheduleInput(value: string): Date | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  // Accept either a bare YYYY-MM-DD (interpreted as midnight UTC, the
-  // user's expected "morning of that day" semantics in most time zones —
-  // the alternative is to pin to local time, but slash commands have no
-  // tz info on the server) or a full ISO 8601 timestamp.
-  const isoDateOnly = /^\d{4}-\d{2}-\d{2}$/;
-  const candidate = isoDateOnly.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
-  const parsed = new Date(candidate);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
 }
 
 function formatScheduledDate(date: Date): string {

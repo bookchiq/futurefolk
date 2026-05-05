@@ -9,8 +9,93 @@
  * lands; there's no migration system in this repo.
  */
 
+import { start } from "workflow/api";
+
+import { scheduledCheckInWorkflow } from "@/workflows/scheduled-check-in";
 import { sql } from "./db";
 import type { Horizon } from "./voice-profile";
+
+// === Schedule input parsing + validation ===
+
+/** Minimum lead time for a scheduled check-in. */
+export const MIN_SCHEDULE_FUTURE_MS = 60_000;
+
+/** Maximum future date for a scheduled check-in. */
+export const MAX_SCHEDULE_HORIZON_DAYS = 365;
+
+/**
+ * Parse a slash-command `schedule:` value into a Date.
+ *
+ * Accepts:
+ *   - Bare YYYY-MM-DD (interpreted as midnight UTC, the user's
+ *     expected "morning of that day" semantics in most time zones —
+ *     the alternative is to pin to local time, but slash commands have
+ *     no tz info on the server).
+ *   - Full ISO 8601 timestamp (e.g. `2026-11-02T15:00:00Z`).
+ *
+ * Returns null if the value is empty or unparseable.
+ */
+export function parseScheduleInput(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const isoDateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  const candidate = isoDateOnly.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
+  const parsed = new Date(candidate);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+/**
+ * Validate a `Date` against the min lead time and max horizon. Returns
+ * `{ ok: true }` or `{ ok: false, reason }` with a user-presentable
+ * reason string. Pure — no side effects, no DB.
+ */
+export function validateScheduledFor(
+  scheduledFor: Date,
+  now: number = Date.now()
+): { ok: true } | { ok: false; reason: "past" | "too-far" } {
+  if (scheduledFor.getTime() - now < MIN_SCHEDULE_FUTURE_MS) {
+    return { ok: false, reason: "past" };
+  }
+  const maxFuture = now + MAX_SCHEDULE_HORIZON_DAYS * 24 * 60 * 60 * 1000;
+  if (scheduledFor.getTime() > maxFuture) {
+    return { ok: false, reason: "too-far" };
+  }
+  return { ok: true };
+}
+
+// === Composed entry point ===
+
+/**
+ * One-stop helper to schedule a check-in: insert the row, start the
+ * workflow. Used by the slash command and any future entry point
+ * (`/profile` schedule form, scripts, internal automations).
+ *
+ * The workflow self-records its run_id in its first step (issue #032),
+ * so this helper doesn't need to call setCheckInWorkflowRunId.
+ *
+ * Throws on DB or workflow-start failure. Caller decides how to surface
+ * the error — slash command shows an ephemeral message; a script can
+ * just print to stderr.
+ */
+export async function scheduleCheckIn(args: {
+  discordUserId: string;
+  horizon: Horizon;
+  topic: string;
+  scheduledFor: Date;
+}): Promise<{ id: number }> {
+  const id = await createScheduledCheckIn(args);
+  await start(scheduledCheckInWorkflow, [
+    {
+      checkInId: id,
+      discordUserId: args.discordUserId,
+      horizon: args.horizon,
+      topic: args.topic,
+      scheduledForIso: args.scheduledFor.toISOString(),
+    },
+  ]);
+  return { id };
+}
 
 export type CheckInStatus = "pending" | "sent" | "cancelled" | "failed";
 
