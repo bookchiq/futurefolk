@@ -105,6 +105,7 @@ re-derived under pressure.
 |---|---|---|
 | `RATE_LIMIT_USER_TURNS_PER_MINUTE` | 15 | Per-user cap on user-role turns persisted per minute |
 | `DEDUP_WINDOW_SECONDS` | 30 | Window inside which an identical `(channel, user, content)` is treated as a redelivery |
+| `FUTUREFOLK_DRY_RUN` | (unset) | When `"1"`, `sendDiscordDM` short-circuits without calling Discord — logs the intended payload and returns stub IDs. Used by `scripts/dry-run-checkin.ts` for testing without DMs. |
 
 Set the same value in Vercel project env AND Railway service env. Otherwise the two processes apply different caps.
 

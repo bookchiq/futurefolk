@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "register:commands": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/register-commands.ts",
-    "start:worker": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/gateway-worker.ts"
+    "start:worker": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/gateway-worker.ts",
+    "dry-run": "tsx scripts/dry-run-checkin.ts"
   },
   "keywords": [],
   "author": "",
