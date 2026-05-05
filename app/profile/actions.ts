@@ -3,13 +3,12 @@
 /**
  * Server actions for the /profile editor.
  *
- * Auth: reads the `ff_user_id` cookie set by the OAuth callback. Lightweight
- * pseudo-session — the cookie is just a Discord ID. If absent or stale, the
- * action returns `{ ok: false, reason: "unauthorized" }` and the page
- * prompts the user to re-authenticate via Discord OAuth.
+ * Auth: reads the session cookie via `getSessionUserId` (lib/session). The
+ * cookie value is currently the user's Discord ID; issue #038 is the
+ * planned migration to HMAC-signed values. If absent or stale, this
+ * returns `{ ok: false, reason: "unauthorized" }` and the page prompts
+ * the user to re-authenticate via Discord OAuth.
  */
-
-import { cookies } from "next/headers";
 
 import {
   buildVoiceProfileFromResponses,
@@ -17,15 +16,13 @@ import {
   getUser,
   saveUserProfile,
 } from "@/lib/voice-profile";
+import { getSessionUserId } from "@/lib/session";
 import type { OnboardingResponses } from "@/app/onboarding/types";
-
-const USER_ID_COOKIE = "ff_user_id";
 
 export async function saveProfileEdit(
   responses: Partial<OnboardingResponses>
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get(USER_ID_COOKIE)?.value;
+  const userId = await getSessionUserId();
   if (!userId) {
     return { ok: false, reason: "unauthorized" };
   }

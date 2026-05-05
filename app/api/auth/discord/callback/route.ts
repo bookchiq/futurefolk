@@ -18,25 +18,14 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 
 import { getUser, promotePendingToUser } from "@/lib/voice-profile";
-
-const PENDING_COOKIE = "ff_pending_session";
-const NEXT_COOKIE = "ff_oauth_next";
-const USER_ID_COOKIE = "ff_user_id";
-// Long enough that returning users can edit their profile without
-// re-authing every visit. Not a real session token — the cookie is just
-// a Discord ID, kept httpOnly + secure + sameSite=lax. /profile prompts
-// re-auth if the cookie has expired.
-const USER_ID_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
-
-function sanitizeNext(value: string | undefined | null): string | null {
-  if (!value) return null;
-  if (!value.startsWith("/")) return null;
-  if (value.startsWith("//")) return null;
-  return value;
-}
+import {
+  clearPendingSession,
+  getPendingSessionId,
+  readAndClearNext,
+  setSessionUserIdOnResponse,
+} from "@/lib/session";
 
 interface DiscordTokenResponse {
   access_token: string;
@@ -76,8 +65,7 @@ export async function GET(request: NextRequest) {
   // Verify the state parameter against the session cookie BEFORE doing any
   // network work. State == session id (set in /api/auth/discord/start). If
   // they don't match, this isn't our redirect — bail.
-  const cookieStore = await cookies();
-  const sessionId = cookieStore.get(PENDING_COOKIE)?.value;
+  const sessionId = await getPendingSessionId();
 
   if (!state || !sessionId || state !== sessionId) {
     console.error(
@@ -163,7 +151,6 @@ export async function GET(request: NextRequest) {
   }
 
   // 3. Promote pending profile (if any) to a real users row.
-  // sessionId / cookieStore came from the state-verification step above.
   const displayName = user.global_name || user.username || null;
 
   let promoted = false;
@@ -182,11 +169,10 @@ export async function GET(request: NextRequest) {
     console.error("[Futurefolk] Failed to promote pending profile:", err);
   }
   // Clear the pending session cookie — it's single-use.
-  cookieStore.delete(PENDING_COOKIE);
+  await clearPendingSession();
 
   // Read & clear the post-auth target the start route stashed (single-use).
-  const nextTarget = sanitizeNext(cookieStore.get(NEXT_COOKIE)?.value);
-  cookieStore.delete(NEXT_COOKIE);
+  const nextTarget = await readAndClearNext();
 
   if (!promoted) {
     // No pending profile to promote. Two cases:
@@ -201,13 +187,7 @@ export async function GET(request: NextRequest) {
       const response = NextResponse.redirect(
         new URL(nextTarget ?? "/profile", request.url)
       );
-      response.cookies.set(USER_ID_COOKIE, user.id, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-        maxAge: USER_ID_COOKIE_MAX_AGE_SECONDS,
-      });
+      setSessionUserIdOnResponse(response, user.id);
       console.log("[Futurefolk] Re-auth for existing Discord user", user.id);
       return response;
     }
@@ -222,12 +202,6 @@ export async function GET(request: NextRequest) {
   const response = NextResponse.redirect(
     new URL(nextTarget ?? "/onboarding/done", request.url)
   );
-  response.cookies.set(USER_ID_COOKIE, user.id, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: USER_ID_COOKIE_MAX_AGE_SECONDS,
-  });
+  setSessionUserIdOnResponse(response, user.id);
   return response;
 }

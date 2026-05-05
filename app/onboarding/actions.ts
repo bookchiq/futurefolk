@@ -15,7 +15,6 @@
  * backfill handles it.
  */
 
-import { cookies } from "next/headers";
 import { after } from "next/server";
 import { randomUUID } from "node:crypto";
 
@@ -27,11 +26,12 @@ import { extractStyleFeatures } from "@/lib/style-features";
 import { extractFewShotPairs } from "@/lib/few-shot-pairs";
 import { generateFutureSelfResponse } from "@/lib/future-self";
 import { sql } from "@/lib/db";
+import {
+  getPendingSessionId,
+  getSessionUserId,
+  setPendingSessionIdOnCookieStore,
+} from "@/lib/session";
 import type { OnboardingResponses } from "./types";
-
-const PENDING_COOKIE = "ff_pending_session";
-const USER_ID_COOKIE = "ff_user_id";
-const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24; // 24h is plenty for "fill out form, hit Discord OAuth, return".
 
 export async function submitOnboardingResponses(
   responses: Partial<OnboardingResponses>
@@ -56,17 +56,10 @@ export async function submitOnboardingResponses(
 
   const profile = buildVoiceProfileFromResponses(responses);
 
-  const cookieStore = await cookies();
-  let sessionId = cookieStore.get(PENDING_COOKIE)?.value;
-  if (!sessionId) {
-    sessionId = randomUUID();
-    cookieStore.set(PENDING_COOKIE, sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: COOKIE_MAX_AGE_SECONDS,
-    });
+  const existingSession = await getPendingSessionId();
+  const sessionId = existingSession ?? randomUUID();
+  if (!existingSession) {
+    await setPendingSessionIdOnCookieStore(sessionId);
   }
 
   await savePendingProfile(sessionId, profile, responses);
@@ -160,8 +153,7 @@ export async function submitOnboardingResponses(
 export async function generateOnboardingPreview(): Promise<
   { ok: true; reply: string } | { ok: false; reason: string }
 > {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get(USER_ID_COOKIE)?.value;
+  const userId = await getSessionUserId();
   if (!userId) {
     return { ok: false, reason: "no-user-cookie" };
   }
