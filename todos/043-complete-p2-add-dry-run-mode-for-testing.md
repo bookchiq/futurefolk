@@ -4,7 +4,7 @@ description: The pure generation path is testable today — only `sendDiscordDM`
 type: code-review
 issue_id: 043
 priority: p2
-status: pending
+status: complete
 tags: [code-review, agent-native, testing]
 ---
 
@@ -77,7 +77,10 @@ Take it. Tiny addition with disproportionate value (testing, friend-tester sanit
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- `FUTUREFOLK_DRY_RUN=1` short-circuits `sendDiscordDM` (after snowflake validation from #037). Logs the intended payload and returns stub IDs.
+- New `scripts/dry-run-checkin.ts` driver + `pnpm dry-run` script. Sets the env var before importing, accepts `<discord-id> <topic>`, prints the would-be reply.
+- Documented in OPERATIONS.md tunables table.
 
 ## Resources
 

@@ -4,7 +4,7 @@ description: Two parity gaps in the worker. (a) Reaction handler doesn't run isD
 type: code-review
 issue_id: 040
 priority: p2
-status: pending
+status: complete
 tags: [code-review, security, worker, prompt-injection]
 ---
 
@@ -79,7 +79,10 @@ Both. They're paired and small.
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- Three persist sites now run `softScrubForHistory` (added in #045): slash `about`, worker DM `msg.content`, worker reaction `reactedText`.
+- Reaction handler now runs `isDuplicateUserMessage` in parallel with profile + rate-limit gates. Catches reaction redelivery across worker reconnects; parity with the DM continuation path.
+- Soft scrub preserves typographic punctuation so DM continuations don't lose voice fidelity on history replay.
 
 ## Resources
 

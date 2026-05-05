@@ -4,7 +4,7 @@ description: Cookie is unsigned (a bare Discord ID) and named `ff_user_id`, adve
 type: code-review
 issue_id: 038
 priority: p2
-status: pending
+status: complete
 tags: [code-review, security, auth, session]
 ---
 
@@ -81,7 +81,12 @@ Either way, **rename the cookie to `ff_session`** as part of this fix — even b
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23 (Option A — HMAC sign).
+- Cookie renamed `ff_user_id` → `ff_session`.
+- Value format: `<discordUserId>.<HMAC-SHA-256>` signed with `SESSION_SIGNING_SECRET`.
+- `verifySessionValue` uses `timingSafeEqual` and validates snowflake shape before computing HMAC (defense in depth).
+- New env var `SESSION_SIGNING_SECRET` documented in OPERATIONS.md (Vercel only — Railway worker doesn't touch the cookie).
+- This invalidates all existing sessions on first deploy. Users re-auth via Discord; voice profiles persist.
 
 ## Resources
 

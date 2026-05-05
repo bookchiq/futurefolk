@@ -4,7 +4,7 @@ description: Five small cleanup items surfaced across the simplicity + pattern-r
 type: code-review
 issue_id: 049
 priority: p3
-status: pending
+status: complete
 tags: [code-review, cleanup, low-priority]
 ---
 
@@ -70,7 +70,11 @@ See file paths above.
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23 (partial).
+- 49a: deleted rotted refactor comment in `lib/voice-profile.ts:91-93`.
+- 49c: removed the redundant post-save sample-messages-changed hint in `app/profile/edit-form.tsx`. Pre-save warning kept.
+- 49d: removed the success log on `clearDerivedVoiceFields` in `app/profile/actions.ts`. Try/catch kept.
+- Skipped (judgment calls): 49b (module-load log) — kept; weak-but-real signal for deploy drift. 49e (workflow ordering comment) — obsoleted by #031's restructure.
 
 ## Resources
 
