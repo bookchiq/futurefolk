@@ -59,10 +59,6 @@ export async function saveProfileEdit(
   if (sampleMessagesChanged) {
     try {
       await clearDerivedVoiceFields(userId);
-      console.log(
-        "[Futurefolk] /profile save: sample messages changed, derived fields cleared for",
-        userId
-      );
     } catch (err) {
       console.error(
         "[Futurefolk] /profile save: clearDerivedVoiceFields failed:",

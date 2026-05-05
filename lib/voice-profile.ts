@@ -88,9 +88,6 @@ export function buildVoiceProfileFromResponses(
   };
 }
 
-// `splitSampleMessages` extracted to `./parse-sample-messages` so the
-// onboarding survey page can call it client-side for live preview without
-// importing this server-only module (which depends on `sql` from `./db`).
 
 /**
  * Look up the saved voice profile for a Discord user. Returns null if not
