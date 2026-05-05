@@ -66,17 +66,31 @@ export function validateScheduledFor(
 
 // === Composed entry point ===
 
+/** Per-user cap on pending scheduled check-ins. Issue #036. */
+export const MAX_ACTIVE_SCHEDULED_PER_USER = 5;
+
+export class ActiveScheduledCapExceededError extends Error {
+  constructor(public readonly cap: number) {
+    super(`active-scheduled-cap-exceeded (${cap})`);
+    this.name = "ActiveScheduledCapExceededError";
+  }
+}
+
 /**
- * One-stop helper to schedule a check-in: insert the row, start the
- * workflow. Used by the slash command and any future entry point
- * (`/profile` schedule form, scripts, internal automations).
+ * One-stop helper to schedule a check-in: enforce the per-user cap,
+ * insert the row, start the workflow. Used by the slash command and any
+ * future entry point (`/profile` schedule form, scripts, internal
+ * automations).
  *
  * The workflow self-records its run_id in its first step (issue #032),
  * so this helper doesn't need to call setCheckInWorkflowRunId.
  *
- * Throws on DB or workflow-start failure. Caller decides how to surface
- * the error — slash command shows an ephemeral message; a script can
- * just print to stderr.
+ * Throws:
+ *   - `ActiveScheduledCapExceededError` if the user already has
+ *     `MAX_ACTIVE_SCHEDULED_PER_USER` pending check-ins.
+ *   - Other errors on DB or workflow-start failure. Caller decides how to
+ *     surface — slash command shows an ephemeral message; a script can
+ *     just print to stderr.
  */
 export async function scheduleCheckIn(args: {
   discordUserId: string;
@@ -84,6 +98,10 @@ export async function scheduleCheckIn(args: {
   topic: string;
   scheduledFor: Date;
 }): Promise<{ id: number }> {
+  const activeCount = await countPendingForUser(args.discordUserId);
+  if (activeCount >= MAX_ACTIVE_SCHEDULED_PER_USER) {
+    throw new ActiveScheduledCapExceededError(MAX_ACTIVE_SCHEDULED_PER_USER);
+  }
   const id = await createScheduledCheckIn(args);
   await start(scheduledCheckInWorkflow, [
     {
@@ -95,6 +113,15 @@ export async function scheduleCheckIn(args: {
     },
   ]);
   return { id };
+}
+
+async function countPendingForUser(discordUserId: string): Promise<number> {
+  const rows = (await sql`
+    SELECT count(*)::int AS cnt
+    FROM scheduled_check_ins
+    WHERE discord_user_id = ${discordUserId} AND status = 'pending'
+  `) as Array<{ cnt: number }>;
+  return rows[0]?.cnt ?? 0;
 }
 
 export type CheckInStatus = "pending" | "sent" | "cancelled" | "failed";

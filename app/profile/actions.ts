@@ -17,7 +17,10 @@ import {
   saveUserProfile,
 } from "@/lib/voice-profile";
 import { getSessionUserId } from "@/lib/session";
-import type { OnboardingResponses } from "@/app/onboarding/types";
+import {
+  validateOnboardingResponses,
+  type OnboardingResponses,
+} from "@/app/onboarding/types";
 
 export async function saveProfileEdit(
   responses: Partial<OnboardingResponses>
@@ -27,23 +30,10 @@ export async function saveProfileEdit(
     return { ok: false, reason: "unauthorized" };
   }
 
-  // Required-field guardrail. Same shape as the onboarding survey's server
-  // action — we never trust the client. Sample messages can be empty (we
-  // have a fallback) but everything else needs a real string.
-  const required: (keyof OnboardingResponses)[] = [
-    "phraseOveruse",
-    "badNewsSoftening",
-    "formerBelief",
-    "hillToDieOn",
-    "notSoundLike",
-    "currentSeason",
-  ];
-  for (const k of required) {
-    const v = responses[k];
-    if (typeof v !== "string" || v.trim().length === 0) {
-      return { ok: false, reason: `missing field: ${k}` };
-    }
-  }
+  // Required-field + length-cap guardrail. Shared with onboarding submit
+  // — server actions never trust the client.
+  const validation = validateOnboardingResponses(responses);
+  if (!validation.ok) return validation;
 
   // Pull the current row to compare sample messages — if they changed, the
   // derived fields (styleFeatures, fewShotPairs) are stale and need to be

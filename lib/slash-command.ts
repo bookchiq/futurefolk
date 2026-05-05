@@ -32,6 +32,8 @@ import {
   isRateLimited,
 } from "./conversation";
 import {
+  ActiveScheduledCapExceededError,
+  MAX_ACTIVE_SCHEDULED_PER_USER,
   MAX_SCHEDULE_HORIZON_DAYS,
   parseScheduleInput,
   scheduleCheckIn,
@@ -63,6 +65,15 @@ export const bot = new Chat<{ discord: typeof discord }>({
 // /futureself slash command
 // ---------------------------------------------------------------------------
 
+/**
+ * Cap on the `about:` slash-command string. Discord allows up to 6000
+ * chars; we cap at 1500 server-side to bound the per-generation
+ * Anthropic token cost (issue #036). The whole `about:` flows into the
+ * trigger context AND into scheduled_check_ins.topic for scheduled
+ * invocations, where it's reused on every subsequent generation.
+ */
+const MAX_ABOUT_LENGTH = 1500;
+
 bot.onSlashCommand("/futureself", async (event) => {
   const options = parseSlashOptions(event.raw);
   const horizon = normalizeHorizon(options.horizon);
@@ -80,6 +91,15 @@ bot.onSlashCommand("/futureself", async (event) => {
     await event.channel.postEphemeral(
       event.user,
       "Need an `about:` — what do you want to talk to future-you about?",
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
+  if (about.length > MAX_ABOUT_LENGTH) {
+    await event.channel.postEphemeral(
+      event.user,
+      `Keep \`about:\` under ${MAX_ABOUT_LENGTH} characters.`,
       { fallbackToDM: true },
     );
     return;
@@ -190,6 +210,14 @@ async function handleScheduledInvocation(args: {
       scheduledFor,
     });
   } catch (err) {
+    if (err instanceof ActiveScheduledCapExceededError) {
+      await event.channel.postEphemeral(
+        event.user,
+        `You already have ${MAX_ACTIVE_SCHEDULED_PER_USER} pending check-ins. Cancel one before scheduling another.`,
+        { fallbackToDM: true },
+      );
+      return;
+    }
     console.error("[Futurefolk] /futureself: scheduleCheckIn failed", err);
     await event.channel.postEphemeral(
       event.user,

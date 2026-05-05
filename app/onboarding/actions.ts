@@ -31,28 +31,15 @@ import {
   getSessionUserId,
   setPendingSessionIdOnCookieStore,
 } from "@/lib/session";
-import type { OnboardingResponses } from "./types";
+import { validateOnboardingResponses, type OnboardingResponses } from "./types";
 
 export async function submitOnboardingResponses(
   responses: Partial<OnboardingResponses>
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  // Required-field guardrail. The UI already validates, but server actions
-  // never trust the client. Sample messages can be empty (we have a
-  // fallback) but everything else needs a real string.
-  const required: (keyof OnboardingResponses)[] = [
-    "phraseOveruse",
-    "badNewsSoftening",
-    "formerBelief",
-    "hillToDieOn",
-    "notSoundLike",
-    "currentSeason",
-  ];
-  for (const k of required) {
-    const v = responses[k];
-    if (typeof v !== "string" || v.trim().length === 0) {
-      return { ok: false, reason: `missing field: ${k}` };
-    }
-  }
+  // Required-field + length-cap guardrail. The UI already validates, but
+  // server actions never trust the client.
+  const validation = validateOnboardingResponses(responses);
+  if (!validation.ok) return validation;
 
   const profile = buildVoiceProfileFromResponses(responses);
 
