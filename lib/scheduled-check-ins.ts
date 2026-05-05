@@ -9,7 +9,7 @@
  * lands; there's no migration system in this repo.
  */
 
-import { start } from "workflow/api";
+import { getRun, start } from "workflow/api";
 
 import { scheduledCheckInWorkflow } from "@/workflows/scheduled-check-in";
 import { sql } from "./db";
@@ -211,16 +211,24 @@ export async function markCheckInFailed(id: number): Promise<void> {
 }
 
 /**
- * Cancel a pending check-in for the given user. Returns the
- * `workflow_run_id` if any (so the caller can call `getRun(id).cancel()`),
- * or null if no matching pending row exists. Idempotent: marks the row
- * cancelled regardless of whether the workflow itself succeeds in
- * cancelling.
+ * Cancel a pending check-in: mark the row `cancelled` AND cancel the
+ * durable workflow run.
+ *
+ * Composed primitive — callers can't forget the workflow-cancel half.
+ *
+ * Returns:
+ *   - `{ cancelled: true, runCancelled: boolean }` if the row was pending
+ *     and the UPDATE succeeded. `runCancelled` reports whether
+ *     `getRun(...).cancel()` also succeeded — even if it didn't, the
+ *     workflow's own atomic-claim UPDATE will short-circuit on wake
+ *     (returns 0 rows because status is no longer 'pending'), so the
+ *     correctness invariant holds.
+ *   - `{ cancelled: false }` if no matching pending row exists.
  */
 export async function cancelScheduledCheckIn(args: {
   id: number;
   discordUserId: string;
-}): Promise<string | null> {
+}): Promise<{ cancelled: true; runCancelled: boolean } | { cancelled: false }> {
   const rows = (await sql`
     UPDATE scheduled_check_ins
     SET status = 'cancelled'
@@ -229,7 +237,30 @@ export async function cancelScheduledCheckIn(args: {
       AND status = 'pending'
     RETURNING workflow_run_id
   `) as Array<{ workflow_run_id: string | null }>;
-  return rows[0]?.workflow_run_id ?? null;
+
+  if (rows.length === 0) {
+    return { cancelled: false };
+  }
+
+  const runId = rows[0].workflow_run_id;
+  if (!runId) {
+    // Row was cancelled before the workflow recorded its run_id (a tiny
+    // race window — issue #032 makes the workflow self-record in its
+    // first step, so this is rare). The row's status is the source of
+    // truth; the workflow's atomic-claim UPDATE will skip on wake.
+    return { cancelled: true, runCancelled: false };
+  }
+
+  try {
+    await getRun(runId).cancel();
+    return { cancelled: true, runCancelled: true };
+  } catch (err) {
+    console.error(
+      "[Futurefolk] cancelScheduledCheckIn: getRun.cancel failed (row is still cancelled)",
+      err,
+    );
+    return { cancelled: true, runCancelled: false };
+  }
 }
 
 /** List a user's check-ins, newest scheduled first. Used by the (future) /profile section. */
