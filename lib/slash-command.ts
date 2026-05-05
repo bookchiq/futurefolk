@@ -33,10 +33,7 @@ import {
   isDuplicateUserMessage,
   isRateLimited,
 } from "./conversation";
-import {
-  createScheduledCheckIn,
-  setCheckInWorkflowRunId,
-} from "./scheduled-check-ins";
+import { createScheduledCheckIn } from "./scheduled-check-ins";
 import { scheduledCheckInWorkflow } from "@/workflows/scheduled-check-in";
 import { VERSION } from "./version";
 
@@ -212,7 +209,10 @@ async function handleScheduledInvocation(args: {
   }
 
   try {
-    const run = await start(scheduledCheckInWorkflow, [
+    // Workflow self-records its run_id in its first step (issue #032), so
+    // we don't need to capture it here. The slash command just needs to
+    // know that start() succeeded.
+    await start(scheduledCheckInWorkflow, [
       {
         checkInId,
         discordUserId: event.user.userId,
@@ -221,18 +221,6 @@ async function handleScheduledInvocation(args: {
         scheduledForIso: scheduledFor.toISOString(),
       },
     ]);
-    // Best-effort: link the row to its workflow run so /profile can cancel
-    // it later. If this update fails, the row is still in 'pending' and the
-    // workflow runs as scheduled — we just lose the cancel-from-UI ability
-    // for this one row.
-    try {
-      await setCheckInWorkflowRunId(checkInId, run.runId);
-    } catch (err) {
-      console.error(
-        "[Futurefolk] /futureself: setCheckInWorkflowRunId failed",
-        err,
-      );
-    }
   } catch (err) {
     console.error("[Futurefolk] /futureself: start workflow failed", err);
     await event.channel.postEphemeral(

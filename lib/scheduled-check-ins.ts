@@ -75,7 +75,17 @@ export async function createScheduledCheckIn(args: {
   return rows[0].id;
 }
 
-/** Attach a workflow run id once we've started the workflow. Best-effort. */
+/**
+ * Attach a workflow run id to a row.
+ *
+ * Called by the workflow itself in its first step (`recordRunId`), not by
+ * the slash command — this avoids the race where the slash command's
+ * UPDATE hadn't landed by the time the workflow wakes (issue #032).
+ *
+ * Idempotent: only writes if `workflow_run_id IS NULL`. A step retry
+ * writes the same value back (no-op); a stray re-call from anywhere else
+ * can't clobber the original.
+ */
 export async function setCheckInWorkflowRunId(
   id: number,
   workflowRunId: string
@@ -83,7 +93,7 @@ export async function setCheckInWorkflowRunId(
   await sql`
     UPDATE scheduled_check_ins
     SET workflow_run_id = ${workflowRunId}
-    WHERE id = ${id}
+    WHERE id = ${id} AND workflow_run_id IS NULL
   `;
 }
 
