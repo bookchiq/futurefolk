@@ -36,9 +36,10 @@ import {
 } from "./voice-profile";
 import type { ConversationTurn } from "./conversation";
 
+export const MODEL_NAME = "claude-sonnet-4-6";
 // Calls Anthropic directly via ANTHROPIC_API_KEY rather than routing through
 // Vercel AI Gateway, which requires a credit card on file.
-const MODEL = anthropic("claude-sonnet-4-6");
+const MODEL = anthropic(MODEL_NAME);
 // Hard ceiling so the model can't write essays even if the prompt fails.
 // Match-length-of-user is enforced in the system prompt.
 const MAX_OUTPUT_TOKENS = 600;

@@ -46,6 +46,8 @@ ChatSDK packages used: `chat`, `@chat-adapter/discord`, `@chat-adapter/state-mem
 
 `SETUP.md` standardizes on `DISCORD_APP_ID`, but `@chat-adapter/discord` auto-detects `DISCORD_APPLICATION_ID`. Both `lib/bot.ts` and `scripts/register-commands.ts` read from either: `process.env.DISCORD_APPLICATION_ID ?? process.env.DISCORD_APP_ID`. Don't "fix" this by renaming the env var in SETUP.md without checking everything that already reads `DISCORD_APP_ID` (the OAuth callback, etc.).
 
+> [Superseded 2026-05-05: PR #009 renamed lib/bot.ts to lib/slash-command.ts. The env-var-precedence behavior described above is unchanged — only the file path is different.]
+
 ### Slash commands need to be registered separately
 
 ChatSDK does not register slash commands with Discord. It only handles dispatch of commands Discord already knows about. There's a one-time-ish setup script at `scripts/register-commands.ts` that does the PUT against `applications/{app}/commands`. Re-run after any change to command name, options, or descriptions.
@@ -70,9 +72,13 @@ Two ways to light up the Gateway-only triggers without touching `lib/bot.ts`:
 
 Do not "solve" this by changing the cron to `0 12 * * *` to satisfy Hobby — a once-a-day 10-minute window means reactions only ever respond if someone happens to react during that window, which is worse than honestly broken.
 
+> [Superseded 2026-05-05: PR #009 renamed lib/bot.ts to lib/slash-command.ts. Also: option (1) above (POST forwarding into the webhook) is not the path that landed — the Railway worker calls `generateFutureSelfResponse`/`appendMessage` directly. See the 2026-05-03 ChatSDK-split entry at the bottom of this file.]
+
 ### Reading slash command options
 
 `event.text` flattens leaf option *values* into a single string. For typed options (we need `horizon`, `about`, `schedule` separately), parse `event.raw.data.options` — the docs explicitly call this out. See `parseSlashOptions` in `lib/bot.ts`.
+
+> [Superseded 2026-05-05: PR #009 renamed lib/bot.ts to lib/slash-command.ts. `parseSlashOptions` now lives in `lib/slash-command.ts`; the technique itself is unchanged.]
 
 ### DM continuation depends on subscription
 
@@ -171,7 +177,11 @@ Previously the cookie was only set inside `submitOnboardingResponses` (the surve
 
 `lib/bot.ts` no longer registers `bot.onSubscribedMessage` or `bot.onReaction` handlers. Those were inert in production (Vercel Hobby can't hold a Gateway WebSocket open), and the prior code suggested they did something. They didn't. Removed alongside the related `dm.subscribe()` and `dm.setState()` calls in the slash command handler, the `ThreadState` interface, and the per-thread metadata constants (`HOURGLASS`, `REACTION_DEFAULT_HORIZON`).
 
+> [Superseded 2026-05-05: PR #009 renamed lib/bot.ts to lib/slash-command.ts. The handler-removal described above is unchanged — only the file path is different.]
+
 DM continuations and ⏳ reactions are now handled in `scripts/gateway-worker.ts` using `discord.js` directly. The worker reads horizon from the most recent `conversation_messages` row (no thread state needed) and calls `generateFutureSelfResponse`/`appendMessage`/`getRecentMessages` directly.
+
+> [Superseded 2026-05-05: PR #044 deleted getRecentMessages — only getRecentMessagesAndHorizon remains. Both the webhook and the Gateway worker now call `getRecentMessagesAndHorizon` instead.]
 
 `@chat-adapter/state-memory` is still required by the `Chat` constructor's type signature (state is non-optional in `ChatOptions`), so it stays as a dependency even though we no longer use subscriptions. Don't try to drop it without first confirming ChatSDK doesn't fall over without it.
 

@@ -1,17 +1,12 @@
 /**
- * Discord webhook endpoint.
+ * Discord webhook endpoint — slash command interactions only.
  *
- * Today this only serves HTTP Interactions — slash commands, button clicks,
- * and the initial PING verification. ChatSDK's Discord adapter verifies the
- * Ed25519 signature and routes to the right handler in lib/slash-command.ts.
+ * Serves HTTP Interactions (slash commands + PING verification) via ChatSDK's
+ * Discord adapter, which verifies the Ed25519 signature and routes to the
+ * handler in lib/slash-command.ts. Gateway events (DM replies, reactions) are
+ * handled by the standalone Railway worker in scripts/gateway-worker.ts.
  *
- * The same endpoint is also designed to receive forwarded Gateway events
- * (regular messages, reactions) once a Gateway worker exists. That worker is
- * intentionally NOT in this repo on Vercel Hobby — see README.md and
- * .v0/findings.md for why and what the two real options are.
- *
- * Configure this URL as your "Interactions Endpoint URL" in the Discord
- * Developer Portal: https://<your-domain>/api/webhooks/discord
+ * Configure as the "Interactions Endpoint URL" in the Discord Developer Portal.
  */
 
 import { after } from "next/server";

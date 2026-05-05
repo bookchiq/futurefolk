@@ -248,24 +248,6 @@ export async function saveUserProfile(
   profile: VoiceProfile,
   rawResponses: Partial<OnboardingResponses>
 ): Promise<void> {
-  // Light-touch overwrite detection: peek at the existing row before the
-  // upsert. If a non-null voice_profile is already there, we're about to
-  // replace it — log a warning so re-onboarding leaves an audit trail until
-  // the /profile page (P6) lets us surface a UI confirmation.
-  const existing = (await sql`
-    SELECT voice_profile
-    FROM users
-    WHERE discord_user_id = ${discordUserId}
-    LIMIT 1
-  `) as Array<{ voice_profile: VoiceProfile | null }>;
-
-  if (existing.length > 0 && existing[0].voice_profile !== null) {
-    console.warn(
-      "[Futurefolk] saveUserProfile: replacing existing voice profile for Discord user",
-      discordUserId
-    );
-  }
-
   await sql`
     INSERT INTO users (
       discord_user_id, display_name, voice_profile, onboarding_responses, updated_at

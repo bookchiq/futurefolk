@@ -46,7 +46,7 @@ As of the 2026-05-03 ChatSDK split, Discord is handled by **two separate process
 
 | Trigger | Transport | Process | Code |
 | --- | --- | --- | --- |
-| `/futureself horizon:<1y\|5y> about:<topic>` | HTTP Interactions (webhook) | Vercel function | `app/api/webhooks/discord/route.ts` → `lib/bot.ts` (ChatSDK) |
+| `/futureself horizon:<1y\|5y> about:<topic>` | HTTP Interactions (webhook) | Vercel function | `app/api/webhooks/discord/route.ts` → `lib/slash-command.ts` (ChatSDK) |
 | Any reply in a DM thread the bot started | Gateway WebSocket | Standalone worker (Railway-deployable) | `scripts/gateway-worker.ts` (discord.js directly) |
 | ⏳ reaction on any message in a channel the bot is in | Gateway WebSocket | Standalone worker | `scripts/gateway-worker.ts` |
 
@@ -55,9 +55,9 @@ Why split: Vercel serverless functions can't hold a Gateway WebSocket open, and 
 ### Slash command — webhook path
 
 - `app/api/webhooks/discord/route.ts` — Discord interactions endpoint. Set `https://<your-domain>/api/webhooks/discord` as the Interactions Endpoint URL in the Discord Developer Portal. ChatSDK's Discord adapter handles Ed25519 signature verification automatically.
-- `lib/bot.ts` — ChatSDK `Chat` instance with one handler: `bot.onSlashCommand("futureself", ...)`. Parses options out of `event.raw.data.options`, calls `generateFutureSelfResponse`, opens a DM, posts the reply.
+- `lib/slash-command.ts` — ChatSDK `Chat` instance with one handler: `bot.onSlashCommand("futureself", ...)`. Parses options out of `event.raw.data.options`, calls `generateFutureSelfResponse`, opens a DM, posts the reply.
 
-There are no `bot.onSubscribedMessage` or `bot.onReaction` handlers in `lib/bot.ts` — they were removed in the ChatSDK split because they were inert in production (Vercel Hobby can't hold a Gateway WebSocket open).
+There are no `bot.onSubscribedMessage` or `bot.onReaction` handlers in `lib/slash-command.ts` — they were removed in the ChatSDK split because they were inert in production (Vercel Hobby can't hold a Gateway WebSocket open).
 
 ### DM continuation + ⏳ reaction — Gateway worker path
 
@@ -95,7 +95,7 @@ Already documented in `SETUP.md`. The Vercel side (slash command webhook) needs 
 
 ### State adapter caveat
 
-ChatSDK's `Chat` constructor requires a state adapter, so `@chat-adapter/state-memory` stays as a dependency. Nothing in `lib/bot.ts` actually uses subscriptions anymore — the slash command handler doesn't call `dm.subscribe()` or `dm.setState()`. Conversation history lives in our own `conversation_messages` Postgres table (see `lib/conversation.ts`), keyed by Discord channel ID, and is read directly by both processes. The `MemoryStateAdapter is not recommended for production` warning that prints on each webhook hit is harmless given how we're using it.
+ChatSDK's `Chat` constructor requires a state adapter, so `@chat-adapter/state-memory` stays as a dependency. Nothing in `lib/slash-command.ts` actually uses subscriptions anymore — the slash command handler doesn't call `dm.subscribe()` or `dm.setState()`. Conversation history lives in our own `conversation_messages` Postgres table (see `lib/conversation.ts`), keyed by Discord channel ID, and is read directly by both processes. The `MemoryStateAdapter is not recommended for production` warning that prints on each webhook hit is harmless given how we're using it.
 
 ## A few last reminders
 

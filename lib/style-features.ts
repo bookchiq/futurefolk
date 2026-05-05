@@ -16,6 +16,8 @@ import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 
+import { MODEL_NAME } from "./future-self";
+
 const StyleFeaturesSchema = z.object({
   averageSentenceLength: z
     .number()
@@ -102,7 +104,7 @@ export async function extractStyleFeatures(
     .join("\n");
 
   const result = await generateObject({
-    model: anthropic("claude-sonnet-4-6"),
+    model: anthropic(MODEL_NAME),
     schema: StyleFeaturesSchema,
     system: SYSTEM_PROMPT,
     prompt: `Analyze the stylistic features of this person's recent messages. Return concrete numbers and short specific lists per the schema.\n\n${corpus}`,
