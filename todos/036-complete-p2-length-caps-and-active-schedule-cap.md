@@ -4,7 +4,7 @@ description: Server actions accept unbounded `responses` blobs; `/futureself abo
 type: code-review
 issue_id: 036
 priority: p2
-status: pending
+status: complete
 tags: [code-review, security, denial-of-wallet, multi-tenant]
 ---
 
@@ -112,7 +112,10 @@ All three. Each is small (5-10 LOC) and they're related defenses against the sam
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- Extracted `validateOnboardingResponses` + `MAX_FIELD_LENGTH` (2000) + `MAX_SAMPLE_MESSAGES_LENGTH` (20000) into `app/onboarding/types.ts`. Both server actions call it.
+- Slash command caps `about:` at 1500 chars before passing into the schedule path.
+- `scheduleCheckIn` enforces `MAX_ACTIVE_SCHEDULED_PER_USER = 5` via `ActiveScheduledCapExceededError` (typed throw); slash command surfaces it as a user-friendly ephemeral.
 
 ## Resources
 

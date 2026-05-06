@@ -4,7 +4,7 @@ description: Workflow steps retry up to 3 times by default. If `deliverDM`'s POS
 type: code-review
 issue_id: 031
 priority: p1
-status: pending
+status: complete
 tags: [code-review, scheduled-check-ins, durable-workflow, correctness]
 ---
 
@@ -109,7 +109,10 @@ Cons: requires a new column (`deliver_step_id`) and stable channelId caching. Mo
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23 (waves 2-5).
+- Replaced `deliverDM` step with `reserveAndDeliver` — single SQL UPDATE atomically flips `pending` → `sent` BEFORE the Discord fetch. Returns 0 rows on retry/cancel; we bail.
+- Split `persistAndMarkSent` into a separate best-effort `appendConversationTurns` step. If it fails after delivery, the user has the DM and the row says `sent`; the next continuation just lacks one assistant turn in history.
+- Cancellation race (was P2-4): same atomic-claim UPDATE returns 0 rows if the user cancelled between status check and delivery.
 
 ## Resources
 

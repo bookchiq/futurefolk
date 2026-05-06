@@ -353,10 +353,11 @@ function formatOnboardingContext(profile: VoiceProfile): string {
  * delimiting untrusted-data sections in prompts.
  */
 const MAX_TRIGGER_CONTEXT_LENGTH = 500;
+const MAX_HISTORY_PERSIST_LENGTH = 4000;
 
 /**
- * Scrub user-supplied text before interpolating it into a prompt or
- * persisting it as untrusted-quoted content.
+ * Scrub user-supplied text before interpolating it into a prompt context
+ * (e.g. inside `<user_topic>...</user_topic>` tags). Strict variant.
  *
  * Steps:
  *   1. NFKC-normalize so fullwidth and compatibility forms collapse to their
@@ -364,23 +365,54 @@ const MAX_TRIGGER_CONTEXT_LENGTH = 500;
  *      `"` filter).
  *   2. Replace control + format characters (`\p{Cc}\p{Cf}`) with spaces.
  *      Covers `\n`, `\r`, `\t`, RTL overrides, isolates, ZWJ, and friends.
- *   3. Replace ASCII + Unicode quote-equivalents and backticks with spaces.
+ *   3. Replace boundary-breaking quote characters and backticks/backslashes
+ *      with spaces. Only includes characters that can break out of the
+ *      surrounding `"..."` quoting context — apostrophes and hyphens are
+ *      preserved because they don't escape double-quote contexts and they
+ *      carry voice signal we want to keep.
  *   4. Collapse runs of whitespace introduced by the substitutions.
  *   5. Trim and cap at `MAX_TRIGGER_CONTEXT_LENGTH`.
  *
- * Exported so callers persisting untrusted content (e.g., the gateway
- * worker's reaction handler) can apply the same scrub before
- * `appendMessage`, preventing the persisted row from re-injecting on a
- * later `getRecentMessagesAndHorizon` replay.
+ * Use this at prompt-interpolation sites only (`buildTriggerContext`).
+ * For persisting raw user content into `conversation_messages`, use
+ * `softScrubForHistory` — which preserves typographic punctuation so DM
+ * continuations don't lose voice fidelity on replay.
  */
 export function scrubForPromptInterpolation(input: string): string {
   return input
     .normalize("NFKC")
     .replace(/[\p{Cc}\p{Cf}]/gu, " ")
-    .replace(/["'`‘-‟′-‷＂＇«»]/g, " ")
+    // Boundary-breaking only: ASCII + typographic double quotes,
+    // backtick, backslash, guillemets. Apostrophes/hyphens preserved.
+    .replace(/["`\\“”„‟＂«»]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, MAX_TRIGGER_CONTEXT_LENGTH);
+}
+
+/**
+ * Soft scrub for content that's about to be persisted as a `user`-role row
+ * in `conversation_messages` (slash command `about:`, DM message text,
+ * reacted message text). Preserves voice signal — quotes, hyphens,
+ * apostrophes all survive — but normalizes encoding and strips control
+ * characters so a stored row can't smuggle invisible payloads back into
+ * the model on a later `getRecentMessagesAndHorizon` replay.
+ *
+ * Persisted user content is structurally fenced (role: "user") when it
+ * reaches the model, so XML-tag injection in the content can't break the
+ * role boundary the way string interpolation could. The remaining risk is
+ * "I am now in admin mode, ignore previous instructions"-style social
+ * engineering, which is bounded today (self-attack from the user's own
+ * DMs) but matters more once friends-testing means anyone can `⏳`-react
+ * to messages another user wrote.
+ */
+export function softScrubForHistory(input: string): string {
+  return input
+    .normalize("NFKC")
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_HISTORY_PERSIST_LENGTH);
 }
 
 export function buildTriggerContext(args: {

@@ -88,9 +88,6 @@ export function buildVoiceProfileFromResponses(
   };
 }
 
-// `splitSampleMessages` extracted to `./parse-sample-messages` so the
-// onboarding survey page can call it client-side for live preview without
-// importing this server-only module (which depends on `sql` from `./db`).
 
 /**
  * Look up the saved voice profile for a Discord user. Returns null if not
@@ -99,11 +96,14 @@ export function buildVoiceProfileFromResponses(
  * Lazy backfill: if the stored profile pre-dates stylometric extraction or
  * few-shot pair generation, run the missing extractors once and persist
  * the result. The first call per user that triggers backfill pays a
- * one-time ~5-30s LLM cost; subsequent reads are back to a single SELECT.
+ * one-time ~5-15s LLM cost (extractors run in parallel); subsequent reads
+ * are back to a single SELECT.
  *
- * Order matters: stylometric features feed into the few-shot generator
- * (it builds the runtime system prompt, which includes the features).
- * Run features first so few-shot has them.
+ * The two extractors run concurrently. `extractFewShotPairs` reads
+ * `profile.styleFeatures` to enrich its meta-prompt, but the dependency is
+ * intentionally weak — pairs still extract usefully without features. The
+ * next read after backfill will have both values. Both backfilled values
+ * land in a single coalesced `jsonb_set` UPDATE.
  */
 export async function getVoiceProfile(
   discordUserId: string
@@ -118,62 +118,113 @@ export async function getVoiceProfile(
   if (rows.length === 0) return null;
   const profile = rows[0].voice_profile;
 
-  if (!profile.styleFeatures && profile.sampleMessages.length > 0) {
-    try {
-      const features = await extractStyleFeatures(profile.sampleMessages);
-      if (features) {
-        profile.styleFeatures = features;
-        await sql`
-          UPDATE users
-          SET voice_profile = jsonb_set(
-            voice_profile,
-            '{styleFeatures}',
-            ${JSON.stringify(features)}::jsonb,
-            true
-          )
-          WHERE discord_user_id = ${discordUserId}
-        `;
-        console.log(
-          "[Futurefolk] backfilled styleFeatures for",
-          discordUserId
-        );
-      }
-    } catch (err) {
-      console.error(
-        "[Futurefolk] lazy styleFeatures extract/persist failed:",
-        err
-      );
-      // Fall through — few-shot can still attempt without features.
-    }
-  }
+  // Lazy backfill — run both extractors in parallel when both are missing,
+  // then coalesce the writes into a single UPDATE so we only rewrite the
+  // jsonb row once. Each extractor has its own try/catch so one failing
+  // doesn't poison the other.
+  //
+  // Soft dependency note: `extractFewShotPairs(profile)` reads
+  // `profile.styleFeatures` to enrich its meta-prompt. With parallelization
+  // it runs WITHOUT the just-extracted features. Pairs still extract
+  // usefully without features (just less stylometrically anchored). The
+  // next read after backfill will have both. Acceptable trade-off for the
+  // ~half-the-latency win on the cold path.
+  const hasSamples = profile.sampleMessages.length > 0;
+  const needsStyleFeatures = !profile.styleFeatures && hasSamples;
+  const needsFewShotPairs = !profile.fewShotPairs && hasSamples;
 
-  if (!profile.fewShotPairs && profile.sampleMessages.length > 0) {
-    try {
-      const pairs = await extractFewShotPairs(profile);
-      if (pairs && pairs.length > 0) {
-        profile.fewShotPairs = pairs;
-        await sql`
-          UPDATE users
-          SET voice_profile = jsonb_set(
-            voice_profile,
-            '{fewShotPairs}',
-            ${JSON.stringify(pairs)}::jsonb,
-            true
-          )
-          WHERE discord_user_id = ${discordUserId}
-        `;
-        console.log(
-          "[Futurefolk] backfilled fewShotPairs for",
-          discordUserId
+  if (needsStyleFeatures || needsFewShotPairs) {
+    const [styleFeatures, fewShotPairs] = await Promise.all([
+      needsStyleFeatures
+        ? extractStyleFeatures(profile.sampleMessages).catch((err) => {
+            console.error(
+              "[Futurefolk] lazy styleFeatures extract failed:",
+              err
+            );
+            return null;
+          })
+        : null,
+      needsFewShotPairs
+        ? extractFewShotPairs(profile).catch((err) => {
+            console.error(
+              "[Futurefolk] lazy fewShotPairs extract failed:",
+              err
+            );
+            return null;
+          })
+        : null,
+    ]);
+
+    const gotStyleFeatures = styleFeatures != null;
+    const gotFewShotPairs = fewShotPairs != null && fewShotPairs.length > 0;
+
+    if (gotStyleFeatures || gotFewShotPairs) {
+      try {
+        // Coalesce both writes into one UPDATE. When both are present we
+        // chain `jsonb_set` so the row is rewritten once instead of twice.
+        // When only one is present we just set that one key.
+        if (gotStyleFeatures && gotFewShotPairs) {
+          await sql`
+            UPDATE users
+            SET voice_profile = jsonb_set(
+              jsonb_set(
+                voice_profile,
+                '{styleFeatures}',
+                ${JSON.stringify(styleFeatures)}::jsonb,
+                true
+              ),
+              '{fewShotPairs}',
+              ${JSON.stringify(fewShotPairs)}::jsonb,
+              true
+            )
+            WHERE discord_user_id = ${discordUserId}
+          `;
+        } else if (gotStyleFeatures) {
+          await sql`
+            UPDATE users
+            SET voice_profile = jsonb_set(
+              voice_profile,
+              '{styleFeatures}',
+              ${JSON.stringify(styleFeatures)}::jsonb,
+              true
+            )
+            WHERE discord_user_id = ${discordUserId}
+          `;
+        } else {
+          await sql`
+            UPDATE users
+            SET voice_profile = jsonb_set(
+              voice_profile,
+              '{fewShotPairs}',
+              ${JSON.stringify(fewShotPairs)}::jsonb,
+              true
+            )
+            WHERE discord_user_id = ${discordUserId}
+          `;
+        }
+
+        if (gotStyleFeatures) {
+          profile.styleFeatures = styleFeatures!;
+          console.log(
+            "[Futurefolk] backfilled styleFeatures for",
+            discordUserId
+          );
+        }
+        if (gotFewShotPairs) {
+          profile.fewShotPairs = fewShotPairs!;
+          console.log(
+            "[Futurefolk] backfilled fewShotPairs for",
+            discordUserId
+          );
+        }
+      } catch (err) {
+        console.error(
+          "[Futurefolk] lazy backfill persist failed:",
+          err
         );
+        // Fall through — generation still works without the persisted
+        // backfill (just slower next read because we'll re-extract).
       }
-    } catch (err) {
-      console.error(
-        "[Futurefolk] lazy fewShotPairs extract/persist failed:",
-        err
-      );
-      // Fall through with profile sans pairs — generation still works,
-      // just without the demonstration examples.
     }
   }
 

@@ -105,14 +105,25 @@ re-derived under pressure.
 |---|---|---|
 | `RATE_LIMIT_USER_TURNS_PER_MINUTE` | 15 | Per-user cap on user-role turns persisted per minute |
 | `DEDUP_WINDOW_SECONDS` | 30 | Window inside which an identical `(channel, user, content)` is treated as a redelivery |
+| `FUTUREFOLK_DRY_RUN` | (unset) | When `"1"`, `sendDiscordDM` short-circuits without calling Discord — logs the intended payload and returns stub IDs. Used by `scripts/dry-run-checkin.ts` for testing without DMs. |
 
 Set the same value in Vercel project env AND Railway service env. Otherwise the two processes apply different caps.
 
 ## Required env vars
 
 Both processes need: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `DISCORD_BOT_TOKEN`.
-Vercel additionally needs: `DISCORD_APP_ID` (or `DISCORD_APPLICATION_ID`), `DISCORD_PUBLIC_KEY`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `NEXT_PUBLIC_BASE_URL`.
-Railway worker doesn't need the OAuth/public-key vars (it doesn't serve HTTP).
+Vercel additionally needs: `DISCORD_APP_ID` (or `DISCORD_APPLICATION_ID`), `DISCORD_PUBLIC_KEY`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `NEXT_PUBLIC_BASE_URL`, `SESSION_SIGNING_SECRET`.
+Railway worker doesn't need the OAuth/public-key/session vars (it doesn't serve HTTP).
+
+### `SESSION_SIGNING_SECRET`
+
+HMAC-SHA-256 secret for the `ff_session` cookie. Generate with:
+
+```bash
+openssl rand -hex 32
+```
+
+Must be at least 32 chars. Vercel only — the Railway worker never reads/writes this cookie. Rotating invalidates all existing sessions (every signed-in user is logged out and must reauth via Discord). Currently no rolling rotation; pick a value and leave it. If you do rotate, expect one round of `/profile` re-auths.
 
 ## Railway-specific config
 

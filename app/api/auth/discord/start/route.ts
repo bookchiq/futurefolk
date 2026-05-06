@@ -23,22 +23,14 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 
-const PENDING_COOKIE = "ff_pending_session";
-const NEXT_COOKIE = "ff_oauth_next";
-const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24; // 24h, same as submitOnboardingResponses
-const NEXT_COOKIE_MAX_AGE_SECONDS = 60 * 10; // 10 min — only needed for the OAuth round-trip
-
-/** Open-redirect defense: only honor same-origin paths starting with "/". */
-function sanitizeNext(value: string | null): string | null {
-  if (!value) return null;
-  if (!value.startsWith("/")) return null;
-  if (value.startsWith("//")) return null;
-  // Plain in-app paths only — no protocol-relative or scheme-included.
-  return value;
-}
+import {
+  getPendingSessionId,
+  sanitizeNext,
+  setNextOnResponse,
+  setPendingSessionIdOnResponse,
+} from "@/lib/session";
 
 export async function GET(request: NextRequest) {
   const clientId =
@@ -55,8 +47,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const cookieStore = await cookies();
-  const existingSession = cookieStore.get(PENDING_COOKIE)?.value;
+  const existingSession = await getPendingSessionId();
   const sessionId = existingSession ?? randomUUID();
 
   const next = sanitizeNext(request.nextUrl.searchParams.get("next"));
@@ -74,26 +65,14 @@ export async function GET(request: NextRequest) {
   // If the user got here without completing the survey first, the cookie
   // won't exist yet — set it now so the callback can read it back.
   if (!existingSession) {
-    response.cookies.set(PENDING_COOKIE, sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: COOKIE_MAX_AGE_SECONDS,
-    });
+    setPendingSessionIdOnResponse(response, sessionId);
   }
 
   // Stash the post-auth target (if any) so the callback can redirect back
   // to wherever the user came from. Defaults to /onboarding/done at the
   // callback if this cookie isn't set.
   if (next) {
-    response.cookies.set(NEXT_COOKIE, next, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: NEXT_COOKIE_MAX_AGE_SECONDS,
-    });
+    setNextOnResponse(response, next);
   }
 
   return response;

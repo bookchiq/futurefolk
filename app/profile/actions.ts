@@ -3,13 +3,12 @@
 /**
  * Server actions for the /profile editor.
  *
- * Auth: reads the `ff_user_id` cookie set by the OAuth callback. Lightweight
- * pseudo-session — the cookie is just a Discord ID. If absent or stale, the
- * action returns `{ ok: false, reason: "unauthorized" }` and the page
- * prompts the user to re-authenticate via Discord OAuth.
+ * Auth: reads the session cookie via `getSessionUserId` (lib/session). The
+ * cookie value is currently the user's Discord ID; issue #038 is the
+ * planned migration to HMAC-signed values. If absent or stale, this
+ * returns `{ ok: false, reason: "unauthorized" }` and the page prompts
+ * the user to re-authenticate via Discord OAuth.
  */
-
-import { cookies } from "next/headers";
 
 import {
   buildVoiceProfileFromResponses,
@@ -17,36 +16,24 @@ import {
   getUser,
   saveUserProfile,
 } from "@/lib/voice-profile";
-import type { OnboardingResponses } from "@/app/onboarding/types";
-
-const USER_ID_COOKIE = "ff_user_id";
+import { getSessionUserId } from "@/lib/session";
+import {
+  validateOnboardingResponses,
+  type OnboardingResponses,
+} from "@/app/onboarding/types";
 
 export async function saveProfileEdit(
   responses: Partial<OnboardingResponses>
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get(USER_ID_COOKIE)?.value;
+  const userId = await getSessionUserId();
   if (!userId) {
     return { ok: false, reason: "unauthorized" };
   }
 
-  // Required-field guardrail. Same shape as the onboarding survey's server
-  // action — we never trust the client. Sample messages can be empty (we
-  // have a fallback) but everything else needs a real string.
-  const required: (keyof OnboardingResponses)[] = [
-    "phraseOveruse",
-    "badNewsSoftening",
-    "formerBelief",
-    "hillToDieOn",
-    "notSoundLike",
-    "currentSeason",
-  ];
-  for (const k of required) {
-    const v = responses[k];
-    if (typeof v !== "string" || v.trim().length === 0) {
-      return { ok: false, reason: `missing field: ${k}` };
-    }
-  }
+  // Required-field + length-cap guardrail. Shared with onboarding submit
+  // — server actions never trust the client.
+  const validation = validateOnboardingResponses(responses);
+  if (!validation.ok) return validation;
 
   // Pull the current row to compare sample messages — if they changed, the
   // derived fields (styleFeatures, fewShotPairs) are stale and need to be
@@ -72,10 +59,6 @@ export async function saveProfileEdit(
   if (sampleMessagesChanged) {
     try {
       await clearDerivedVoiceFields(userId);
-      console.log(
-        "[Futurefolk] /profile save: sample messages changed, derived fields cleared for",
-        userId
-      );
     } catch (err) {
       console.error(
         "[Futurefolk] /profile save: clearDerivedVoiceFields failed:",

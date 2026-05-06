@@ -11,19 +11,16 @@
  */
 
 import Link from "next/link";
-import { cookies } from "next/headers";
 
 import { getUser } from "@/lib/voice-profile";
+import { getSessionUserId } from "@/lib/session";
 import { ProfileEditForm } from "./edit-form";
-
-const USER_ID_COOKIE = "ff_user_id";
 
 // Always render dynamically — this page depends on cookies.
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage() {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get(USER_ID_COOKIE)?.value;
+  const userId = await getSessionUserId();
 
   if (!userId) {
     return <SignInPrompt />;

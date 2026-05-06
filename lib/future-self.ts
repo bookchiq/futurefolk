@@ -171,11 +171,27 @@ function buildMessages(
   // the model know these are demonstrations, not actual past conversation.
   // Demonstrated voice patterns are dramatically more reliable than
   // described ones, especially for register and idiom.
+  //
+  // The LAST few-shot assistant message gets an `ephemeral` cacheControl
+  // breakpoint so Anthropic caches `system + few-shot` together as a
+  // single prefix. History + final user message stay uncached as they
+  // should. Combined with the system-prompt breakpoint set by the caller,
+  // we use 2 of the 4 available breakpoints. Cache invalidates when the
+  // user edits their profile (which clears the derived pairs).
   if (fewShotPairs && fewShotPairs.length > 0) {
-    for (const pair of fewShotPairs) {
+    const lastIndex = fewShotPairs.length - 1;
+    fewShotPairs.forEach((pair, i) => {
       out.push({ role: "user", content: pair.userPrompt });
-      out.push({ role: "assistant", content: pair.assistantReply });
-    }
+      out.push({
+        role: "assistant",
+        content: pair.assistantReply,
+        ...(i === lastIndex && {
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral" } },
+          },
+        }),
+      });
+    });
   }
 
   for (const turn of opts.history ?? []) {

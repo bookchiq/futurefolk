@@ -4,7 +4,7 @@ description: Two perf wins in `lib/voice-profile.ts` and `lib/future-self.ts` wo
 type: code-review
 issue_id: 035
 priority: p1
-status: pending
+status: complete
 tags: [code-review, performance, voice-pipeline]
 ---
 
@@ -106,7 +106,10 @@ Take both. They're small, independent, and high-value. Bundle into one PR.
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- `getVoiceProfile` lazy backfill now runs both extractors via `Promise.all`. ~half the worst-case cold-path latency (10-15s instead of 25-30s).
+- Persistence coalesced: when both extractors succeed, both fields land in a single chained `jsonb_set` UPDATE (one row rewrite instead of two). Single-extractor branches kept for partial success.
+- Few-shot pairs got a second `cacheControl: { type: "ephemeral" }` breakpoint on the LAST assistant message in `buildMessages`. System + few-shot now cached as one prefix.
 
 ## Resources
 

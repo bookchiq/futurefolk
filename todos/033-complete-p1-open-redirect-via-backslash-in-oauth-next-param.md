@@ -4,7 +4,7 @@ description: `sanitizeNext` blocks `//evil.com` but lets `/\/evil.com` through. 
 type: code-review
 issue_id: 033
 priority: p1
-status: pending
+status: complete
 tags: [code-review, security, oauth, open-redirect]
 ---
 
@@ -64,7 +64,10 @@ Cons: easy to under-allow (Unicode in the path, query string with valid `+`, etc
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- Centralized `sanitizeNext` in `lib/session.ts` (per #039).
+- Added rejection for backslashes (`/\/evil.com` → blocked).
+- Bonus: also rejects newlines/tabs (browsers strip these silently from URL paths and they could otherwise slip past startsWith checks).
 
 ## Resources
 

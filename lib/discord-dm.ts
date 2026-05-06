@@ -24,6 +24,18 @@ export async function sendDiscordDM(
   discordUserId: string,
   content: string
 ): Promise<SendDmResult> {
+  if (!/^\d{15,25}$/.test(discordUserId)) {
+    throw new Error("[Futurefolk] sendDiscordDM: invalid discordUserId shape");
+  }
+
+  if (process.env.FUTUREFOLK_DRY_RUN === "1") {
+    console.log("[Futurefolk] DRY_RUN sendDiscordDM:", {
+      discordUserId,
+      contentPreview: content.slice(0, 200),
+    });
+    return { channelId: "dry-run-channel", messageId: "dry-run-message" };
+  }
+
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     throw new Error("[Futurefolk] sendDiscordDM: DISCORD_BOT_TOKEN is not set");

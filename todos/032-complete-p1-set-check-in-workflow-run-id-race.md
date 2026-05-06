@@ -4,7 +4,7 @@ description: Slash command does start(workflow) THEN UPDATE workflow_run_id. If 
 type: code-review
 issue_id: 032
 priority: p1
-status: pending
+status: complete
 tags: [code-review, scheduled-check-ins, race-condition]
 ---
 
@@ -77,7 +77,10 @@ Cons: more moving parts. Token round-trip adds latency.
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- Workflow self-records run_id in its first step via `getWorkflowMetadata().workflowRunId`.
+- Slash command no longer races against workflow wake — `setCheckInWorkflowRunId` is gone from the slash path entirely.
+- `setCheckInWorkflowRunId` now writes only when `workflow_run_id IS NULL` so step retries are no-ops.
 
 ## Resources
 

@@ -181,9 +181,6 @@ export function ProfileEditForm({
             role="status"
           >
             Saved.
-            {save.sampleMessagesChanged
-              ? " Voice features will rebuild on your next /futureself."
-              : ""}
           </p>
         )}
         {save.kind === "error" && (

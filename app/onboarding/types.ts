@@ -1,3 +1,53 @@
+// === Length caps ===
+// Defense against denial-of-wallet (huge profile fields → huge Anthropic
+// extraction inputs → ongoing per-generation token cost). Enforced
+// server-side on both onboarding submit and /profile save (issue #036).
+
+/** Per-field cap for short answers. */
+export const MAX_FIELD_LENGTH = 2000;
+
+/** Larger cap for the sample-messages textarea. */
+export const MAX_SAMPLE_MESSAGES_LENGTH = 20_000;
+
+/** Required-field IDs (subset of OnboardingResponses keys). */
+export const REQUIRED_FIELD_IDS = [
+  "phraseOveruse",
+  "badNewsSoftening",
+  "formerBelief",
+  "hillToDieOn",
+  "notSoundLike",
+  "currentSeason",
+] as const satisfies readonly (keyof OnboardingResponses)[];
+
+/**
+ * Validate onboarding/profile responses. Returns a structured result so
+ * callers can surface a precise error reason. Pure — no DB, no I/O.
+ *
+ * Sample messages is intentionally NOT in the required-field list (we
+ * have a fallback when empty), but its length is still capped if present.
+ */
+export function validateOnboardingResponses(
+  responses: Partial<OnboardingResponses>,
+):
+  | { ok: true }
+  | { ok: false; reason: string } {
+  for (const k of REQUIRED_FIELD_IDS) {
+    const v = responses[k];
+    if (typeof v !== "string" || v.trim().length === 0) {
+      return { ok: false, reason: `missing field: ${k}` };
+    }
+  }
+  for (const [k, v] of Object.entries(responses)) {
+    if (typeof v !== "string") continue;
+    const max =
+      k === "sampleMessages" ? MAX_SAMPLE_MESSAGES_LENGTH : MAX_FIELD_LENGTH;
+    if (v.length > max) {
+      return { ok: false, reason: `field-too-long: ${k}` };
+    }
+  }
+  return { ok: true };
+}
+
 export interface OnboardingResponses {
   // Required questions
   phraseOveruse: string;

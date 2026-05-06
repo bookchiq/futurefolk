@@ -4,7 +4,7 @@ description: Cookie names, max-ages, and security flags are duplicated across 5+
 type: code-review
 issue_id: 039
 priority: p2
-status: pending
+status: complete
 tags: [code-review, security, refactor]
 ---
 
@@ -70,7 +70,11 @@ Land this BEFORE issue #038 (so the signing change is one file, not five). Or la
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- New `lib/session.ts` owns: cookie names, max-ages, security flags, sanitizeNext, getSessionUserId/setSessionUserId, getPendingSessionId/setPendingSessionId/clearPendingSession, setNext/readAndClearNext.
+- Threaded through 5 callers: `app/api/auth/discord/start/route.ts`, `app/api/auth/discord/callback/route.ts`, `app/profile/page.tsx`, `app/profile/actions.ts`, `app/onboarding/actions.ts`.
+- `grep -rn '"ff_user_id"' app/ lib/` returns 0 hits outside `lib/session.ts`.
+- This made #038's HMAC migration a one-file change.
 
 ## Resources
 

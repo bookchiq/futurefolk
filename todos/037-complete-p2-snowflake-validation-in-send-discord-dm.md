@@ -4,7 +4,7 @@ description: Defense-in-depth: today the value is trusted from event.user.userId
 type: code-review
 issue_id: 037
 priority: p2
-status: pending
+status: complete
 tags: [code-review, security, defense-in-depth]
 ---
 
@@ -57,7 +57,8 @@ Take it. Pure upside.
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- `sendDiscordDM` rejects values not matching `^\d{15,25}$` (Discord snowflake shape) at the top of the function — runs even in dry-run mode.
 
 ## Resources
 

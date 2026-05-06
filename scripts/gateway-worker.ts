@@ -33,7 +33,7 @@ import {
   isRateLimited,
 } from "../lib/conversation";
 import { getVoiceProfile, type Horizon } from "../lib/voice-profile";
-import { scrubForPromptInterpolation } from "../lib/voice";
+import { softScrubForHistory } from "../lib/voice";
 import { VERSION } from "../lib/version";
 
 const HOURGLASS = "⏳";
@@ -127,8 +127,17 @@ client.on(Events.MessageCreate, async (msg: Message) => {
 
     // Persist the user turn before generation so a crash mid-call doesn't
     // lose the question. History was already read above; the model's
-    // `prompt` argument carries the new turn separately.
-    await appendMessage(channelId, userId, horizon, "user", text);
+    // `prompt` argument carries the new turn separately. softScrub
+    // normalizes encoding + caps length without damaging typographic
+    // punctuation (so DM continuations don't lose voice fidelity on
+    // replay — issue #040).
+    await appendMessage(
+      channelId,
+      userId,
+      horizon,
+      "user",
+      softScrubForHistory(text)
+    );
 
     const reply = await generateFutureSelfResponse({
       discordUserId: userId,
@@ -181,10 +190,25 @@ client.on(
         }
       }
 
-      // Run profile + rate-limit in parallel — both gates required.
-      const [profile, rateLimited] = await Promise.all([
+      const fullUser = user.partial ? await user.fetch() : user;
+      const dm = await fullUser.createDM();
+
+      const reactedText = reaction.message.content ?? "";
+      const horizon = REACTION_DEFAULT_HORIZON;
+      const promptText =
+        reactedText ||
+        "(reacted to a message I couldn't read — context unavailable)";
+      // Same softer normalize the persistence form gets — needed to
+      // compare against the dedup query, which sees the persisted shape.
+      const persistedText = softScrubForHistory(promptText);
+
+      // Run profile + rate-limit + dedup in parallel — three gates
+      // required. Dedup catches reaction redelivery across worker
+      // reconnects and parity with the DM continuation path (issue #040).
+      const [profile, rateLimited, isDup] = await Promise.all([
         getVoiceProfile(user.id),
         isRateLimited(user.id),
+        isDuplicateUserMessage(dm.id, user.id, persistedText),
       ]);
 
       if (!profile) {
@@ -197,25 +221,22 @@ client.on(
         console.log(`[gateway-worker] reaction rate-limited: ${user.id}`);
         return;
       }
-
-      const reactedText = reaction.message.content ?? "";
-      const horizon = REACTION_DEFAULT_HORIZON;
-      const promptText =
-        reactedText ||
-        "(reacted to a message I couldn't read — context unavailable)";
+      if (isDup) {
+        console.log(
+          `[gateway-worker] reaction duplicate, skipping: ${user.id}`
+        );
+        return;
+      }
 
       console.log(
         `[gateway-worker] ⏳ reaction by ${user.id} (len=${reactedText.length})`
       );
 
-      const fullUser = user.partial ? await user.fetch() : user;
-      const dm = await fullUser.createDM();
-
-      // Persist the scrubbed form. Raw reacted text could host injection
-      // payloads; the system prompt already scrubs at interpolation time
-      // (lib/voice.ts::buildTriggerContext), but the row would replay raw
-      // on the next continuation turn unless we scrub before persistence.
-      const persistedText = scrubForPromptInterpolation(promptText);
+      // Persist the soft-scrubbed form. The system prompt's strict scrub
+      // (lib/voice.ts::scrubForPromptInterpolation) handles
+      // boundary-breaking chars at interpolation time; persistence uses
+      // the softer scrub so quotes/apostrophes/hyphens survive in voice
+      // history without re-injecting on the next continuation replay.
       await appendMessage(dm.id, fullUser.id, horizon, "user", persistedText);
 
       const reply = await generateFutureSelfResponse({

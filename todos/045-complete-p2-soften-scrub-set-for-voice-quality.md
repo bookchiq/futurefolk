@@ -4,7 +4,7 @@ description: The current scrubber's character ranges include U+2018-U+201F (smar
 type: code-review
 issue_id: 045
 priority: p2
-status: pending
+status: complete
 tags: [code-review, voice-quality, security]
 ---
 
@@ -72,7 +72,10 @@ If we're nervous about changing the strip set, at minimum add a comment listing 
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- `scrubForPromptInterpolation` now strips ONLY boundary-breaking chars: ASCII + typographic double quotes, backtick, backslash, guillemets. Apostrophes/hyphens preserved (they can't escape double-quote contexts and they carry voice signal).
+- Added backslash to the strip set (was missing — could have escaped into the prompt template).
+- Added new exported `softScrubForHistory(input)` for persistence sites: NFKC normalize + `\p{Cc}\p{Cf}` strip + 4000-char cap, no quote stripping. Used by #040.
 
 ## Resources
 

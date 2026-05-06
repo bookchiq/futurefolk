@@ -9,8 +9,120 @@
  * lands; there's no migration system in this repo.
  */
 
+import { getRun, start } from "workflow/api";
+
+import { scheduledCheckInWorkflow } from "@/workflows/scheduled-check-in";
 import { sql } from "./db";
 import type { Horizon } from "./voice-profile";
+
+// === Schedule input parsing + validation ===
+
+/** Minimum lead time for a scheduled check-in. */
+export const MIN_SCHEDULE_FUTURE_MS = 60_000;
+
+/** Maximum future date for a scheduled check-in. */
+export const MAX_SCHEDULE_HORIZON_DAYS = 365;
+
+/**
+ * Parse a slash-command `schedule:` value into a Date.
+ *
+ * Accepts:
+ *   - Bare YYYY-MM-DD (interpreted as midnight UTC, the user's
+ *     expected "morning of that day" semantics in most time zones —
+ *     the alternative is to pin to local time, but slash commands have
+ *     no tz info on the server).
+ *   - Full ISO 8601 timestamp (e.g. `2026-11-02T15:00:00Z`).
+ *
+ * Returns null if the value is empty or unparseable.
+ */
+export function parseScheduleInput(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const isoDateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  const candidate = isoDateOnly.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
+  const parsed = new Date(candidate);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+/**
+ * Validate a `Date` against the min lead time and max horizon. Returns
+ * `{ ok: true }` or `{ ok: false, reason }` with a user-presentable
+ * reason string. Pure — no side effects, no DB.
+ */
+export function validateScheduledFor(
+  scheduledFor: Date,
+  now: number = Date.now()
+): { ok: true } | { ok: false; reason: "past" | "too-far" } {
+  if (scheduledFor.getTime() - now < MIN_SCHEDULE_FUTURE_MS) {
+    return { ok: false, reason: "past" };
+  }
+  const maxFuture = now + MAX_SCHEDULE_HORIZON_DAYS * 24 * 60 * 60 * 1000;
+  if (scheduledFor.getTime() > maxFuture) {
+    return { ok: false, reason: "too-far" };
+  }
+  return { ok: true };
+}
+
+// === Composed entry point ===
+
+/** Per-user cap on pending scheduled check-ins. Issue #036. */
+export const MAX_ACTIVE_SCHEDULED_PER_USER = 5;
+
+export class ActiveScheduledCapExceededError extends Error {
+  constructor(public readonly cap: number) {
+    super(`active-scheduled-cap-exceeded (${cap})`);
+    this.name = "ActiveScheduledCapExceededError";
+  }
+}
+
+/**
+ * One-stop helper to schedule a check-in: enforce the per-user cap,
+ * insert the row, start the workflow. Used by the slash command and any
+ * future entry point (`/profile` schedule form, scripts, internal
+ * automations).
+ *
+ * The workflow self-records its run_id in its first step (issue #032),
+ * so this helper doesn't need to call setCheckInWorkflowRunId.
+ *
+ * Throws:
+ *   - `ActiveScheduledCapExceededError` if the user already has
+ *     `MAX_ACTIVE_SCHEDULED_PER_USER` pending check-ins.
+ *   - Other errors on DB or workflow-start failure. Caller decides how to
+ *     surface — slash command shows an ephemeral message; a script can
+ *     just print to stderr.
+ */
+export async function scheduleCheckIn(args: {
+  discordUserId: string;
+  horizon: Horizon;
+  topic: string;
+  scheduledFor: Date;
+}): Promise<{ id: number }> {
+  const activeCount = await countPendingForUser(args.discordUserId);
+  if (activeCount >= MAX_ACTIVE_SCHEDULED_PER_USER) {
+    throw new ActiveScheduledCapExceededError(MAX_ACTIVE_SCHEDULED_PER_USER);
+  }
+  const id = await createScheduledCheckIn(args);
+  await start(scheduledCheckInWorkflow, [
+    {
+      checkInId: id,
+      discordUserId: args.discordUserId,
+      horizon: args.horizon,
+      topic: args.topic,
+      scheduledForIso: args.scheduledFor.toISOString(),
+    },
+  ]);
+  return { id };
+}
+
+async function countPendingForUser(discordUserId: string): Promise<number> {
+  const rows = (await sql`
+    SELECT count(*)::int AS cnt
+    FROM scheduled_check_ins
+    WHERE discord_user_id = ${discordUserId} AND status = 'pending'
+  `) as Array<{ cnt: number }>;
+  return rows[0]?.cnt ?? 0;
+}
 
 export type CheckInStatus = "pending" | "sent" | "cancelled" | "failed";
 
@@ -75,7 +187,17 @@ export async function createScheduledCheckIn(args: {
   return rows[0].id;
 }
 
-/** Attach a workflow run id once we've started the workflow. Best-effort. */
+/**
+ * Attach a workflow run id to a row.
+ *
+ * Called by the workflow itself in its first step (`recordRunId`), not by
+ * the slash command — this avoids the race where the slash command's
+ * UPDATE hadn't landed by the time the workflow wakes (issue #032).
+ *
+ * Idempotent: only writes if `workflow_run_id IS NULL`. A step retry
+ * writes the same value back (no-op); a stray re-call from anywhere else
+ * can't clobber the original.
+ */
 export async function setCheckInWorkflowRunId(
   id: number,
   workflowRunId: string
@@ -83,7 +205,7 @@ export async function setCheckInWorkflowRunId(
   await sql`
     UPDATE scheduled_check_ins
     SET workflow_run_id = ${workflowRunId}
-    WHERE id = ${id}
+    WHERE id = ${id} AND workflow_run_id IS NULL
   `;
 }
 
@@ -116,16 +238,24 @@ export async function markCheckInFailed(id: number): Promise<void> {
 }
 
 /**
- * Cancel a pending check-in for the given user. Returns the
- * `workflow_run_id` if any (so the caller can call `getRun(id).cancel()`),
- * or null if no matching pending row exists. Idempotent: marks the row
- * cancelled regardless of whether the workflow itself succeeds in
- * cancelling.
+ * Cancel a pending check-in: mark the row `cancelled` AND cancel the
+ * durable workflow run.
+ *
+ * Composed primitive — callers can't forget the workflow-cancel half.
+ *
+ * Returns:
+ *   - `{ cancelled: true, runCancelled: boolean }` if the row was pending
+ *     and the UPDATE succeeded. `runCancelled` reports whether
+ *     `getRun(...).cancel()` also succeeded — even if it didn't, the
+ *     workflow's own atomic-claim UPDATE will short-circuit on wake
+ *     (returns 0 rows because status is no longer 'pending'), so the
+ *     correctness invariant holds.
+ *   - `{ cancelled: false }` if no matching pending row exists.
  */
 export async function cancelScheduledCheckIn(args: {
   id: number;
   discordUserId: string;
-}): Promise<string | null> {
+}): Promise<{ cancelled: true; runCancelled: boolean } | { cancelled: false }> {
   const rows = (await sql`
     UPDATE scheduled_check_ins
     SET status = 'cancelled'
@@ -134,7 +264,30 @@ export async function cancelScheduledCheckIn(args: {
       AND status = 'pending'
     RETURNING workflow_run_id
   `) as Array<{ workflow_run_id: string | null }>;
-  return rows[0]?.workflow_run_id ?? null;
+
+  if (rows.length === 0) {
+    return { cancelled: false };
+  }
+
+  const runId = rows[0].workflow_run_id;
+  if (!runId) {
+    // Row was cancelled before the workflow recorded its run_id (a tiny
+    // race window — issue #032 makes the workflow self-record in its
+    // first step, so this is rare). The row's status is the source of
+    // truth; the workflow's atomic-claim UPDATE will skip on wake.
+    return { cancelled: true, runCancelled: false };
+  }
+
+  try {
+    await getRun(runId).cancel();
+    return { cancelled: true, runCancelled: true };
+  } catch (err) {
+    console.error(
+      "[Futurefolk] cancelScheduledCheckIn: getRun.cancel failed (row is still cancelled)",
+      err,
+    );
+    return { cancelled: true, runCancelled: false };
+  }
 }
 
 /** List a user's check-ins, newest scheduled first. Used by the (future) /profile section. */

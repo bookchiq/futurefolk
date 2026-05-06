@@ -4,7 +4,7 @@ description: Slash command bundles parsing, validation, and orchestration. Move 
 type: code-review
 issue_id: 042
 priority: p2
-status: pending
+status: complete
 tags: [code-review, agent-native, refactor]
 ---
 
@@ -81,7 +81,10 @@ Take it. Pairs naturally with #032 (workflow self-records run_id) and #041 (canc
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23.
+- `lib/scheduled-check-ins.ts` exports: `MIN_SCHEDULE_FUTURE_MS`, `MAX_SCHEDULE_HORIZON_DAYS`, `parseScheduleInput`, `validateScheduledFor`, `scheduleCheckIn`.
+- `lib/slash-command.ts::handleScheduledInvocation` shrank from ~85 to ~40 lines. Now a thin caller around shared primitives.
+- Future entry points (a /profile schedule form, a script, an internal automation) can call `scheduleCheckIn(args)` without re-implementing validation or workflow-start glue.
 
 ## Resources
 

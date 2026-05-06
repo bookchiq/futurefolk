@@ -4,7 +4,7 @@ description: cancelScheduledCheckIn returns the workflow_run_id but doesn't actu
 type: code-review
 issue_id: 041
 priority: p2
-status: pending
+status: complete
 tags: [code-review, scheduled-check-ins, agent-native, cleanup]
 ---
 
@@ -105,7 +105,11 @@ If you don't expect to ship the cancel UI within the next two weeks, prefer Path
 
 ## Work Log
 
-(none yet)
+**2026-05-05** — Resolved in PR #23 via Path A (ship the cancel surface).
+- `cancelScheduledCheckIn` now atomically does both halves: row UPDATE + `getRun(runId).cancel()`. Returns a discriminated result `{ cancelled: true, runCancelled }` or `{ cancelled: false }`.
+- `scripts/cancel-check-in.ts` ships as the admin escape hatch until the /profile cancel UI lands. `pnpm cancel-check-in <discord-id> <check-in-id>`.
+- If `getRun.cancel` fails, the row is already marked cancelled and the workflow's atomic-claim UPDATE on wake (#031) skips the DM. Correctness invariant holds.
+- Reconciler for the inverse failure (workflow killed but row still pending) deferred — captured in OPERATIONS.md::Pre-launch readiness gaps.
 
 ## Resources
 

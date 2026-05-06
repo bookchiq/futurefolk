@@ -24,20 +24,22 @@ import { Chat } from "chat";
 import { createDiscordAdapter } from "@chat-adapter/discord";
 import { createMemoryState } from "@chat-adapter/state-memory";
 
-import { start } from "workflow/api";
-
 import { type Horizon } from "./voice-profile";
 import { generateFutureSelfResponse } from "./future-self";
+import { softScrubForHistory } from "./voice";
 import {
   appendMessage,
   isDuplicateUserMessage,
   isRateLimited,
 } from "./conversation";
 import {
-  createScheduledCheckIn,
-  setCheckInWorkflowRunId,
+  ActiveScheduledCapExceededError,
+  MAX_ACTIVE_SCHEDULED_PER_USER,
+  MAX_SCHEDULE_HORIZON_DAYS,
+  parseScheduleInput,
+  scheduleCheckIn,
+  validateScheduledFor,
 } from "./scheduled-check-ins";
-import { scheduledCheckInWorkflow } from "@/workflows/scheduled-check-in";
 import { VERSION } from "./version";
 
 // Logged once per cold start so deploy drift between Vercel + Railway is
@@ -64,6 +66,15 @@ export const bot = new Chat<{ discord: typeof discord }>({
 // /futureself slash command
 // ---------------------------------------------------------------------------
 
+/**
+ * Cap on the `about:` slash-command string. Discord allows up to 6000
+ * chars; we cap at 1500 server-side to bound the per-generation
+ * Anthropic token cost (issue #036). The whole `about:` flows into the
+ * trigger context AND into scheduled_check_ins.topic for scheduled
+ * invocations, where it's reused on every subsequent generation.
+ */
+const MAX_ABOUT_LENGTH = 1500;
+
 bot.onSlashCommand("/futureself", async (event) => {
   const options = parseSlashOptions(event.raw);
   const horizon = normalizeHorizon(options.horizon);
@@ -81,6 +92,15 @@ bot.onSlashCommand("/futureself", async (event) => {
     await event.channel.postEphemeral(
       event.user,
       "Need an `about:` — what do you want to talk to future-you about?",
+      { fallbackToDM: true },
+    );
+    return;
+  }
+
+  if (about.length > MAX_ABOUT_LENGTH) {
+    await event.channel.postEphemeral(
+      event.user,
+      `Keep \`about:\` under ${MAX_ABOUT_LENGTH} characters.`,
       { fallbackToDM: true },
     );
     return;
@@ -132,8 +152,15 @@ bot.onSlashCommand("/futureself", async (event) => {
   }
 
   // Persist the user turn before generation so a crash mid-call doesn't lose
-  // the question.
-  await appendMessage(channelId, event.user.userId, horizon, "user", about);
+  // the question. Soft scrub for parity with the worker DM + reaction
+  // paths — normalizes encoding without touching voice signal (issue #040).
+  await appendMessage(
+    channelId,
+    event.user.userId,
+    horizon,
+    "user",
+    softScrubForHistory(about)
+  );
 
   const reply = await generateFutureSelfResponse({
     discordUserId: event.user.userId,
@@ -151,8 +178,6 @@ bot.onSlashCommand("/futureself", async (event) => {
 // Scheduled check-in path
 // ---------------------------------------------------------------------------
 
-const MAX_SCHEDULE_HORIZON_DAYS = 365;
-const MIN_SCHEDULE_FUTURE_MS = 60_000; // must be at least a minute in the future
 type SlashEvent = Parameters<Parameters<typeof bot.onSlashCommand>[1]>[0];
 
 async function handleScheduledInvocation(args: {
@@ -173,71 +198,38 @@ async function handleScheduledInvocation(args: {
     return;
   }
 
-  const now = Date.now();
-  if (scheduledFor.getTime() - now < MIN_SCHEDULE_FUTURE_MS) {
-    await event.channel.postEphemeral(
-      event.user,
-      "That schedule is in the past (or right now). Pick a date at least a minute out.",
-      { fallbackToDM: true },
-    );
+  const validation = validateScheduledFor(scheduledFor);
+  if (!validation.ok) {
+    const message =
+      validation.reason === "past"
+        ? "That schedule is in the past (or right now). Pick a date at least a minute out."
+        : `That's more than a year out. Try a date within ${MAX_SCHEDULE_HORIZON_DAYS} days.`;
+    await event.channel.postEphemeral(event.user, message, {
+      fallbackToDM: true,
+    });
     return;
   }
 
-  const maxFuture = now + MAX_SCHEDULE_HORIZON_DAYS * 24 * 60 * 60 * 1000;
-  if (scheduledFor.getTime() > maxFuture) {
-    await event.channel.postEphemeral(
-      event.user,
-      `That's more than a year out. Try a date within ${MAX_SCHEDULE_HORIZON_DAYS} days.`,
-      { fallbackToDM: true },
-    );
-    return;
-  }
-
-  let checkInId: number;
   try {
-    checkInId = await createScheduledCheckIn({
+    await scheduleCheckIn({
       discordUserId: event.user.userId,
       horizon,
       topic: about,
       scheduledFor,
     });
   } catch (err) {
-    console.error("[Futurefolk] /futureself: createScheduledCheckIn failed", err);
+    if (err instanceof ActiveScheduledCapExceededError) {
+      await event.channel.postEphemeral(
+        event.user,
+        `You already have ${MAX_ACTIVE_SCHEDULED_PER_USER} pending check-ins. Cancel one before scheduling another.`,
+        { fallbackToDM: true },
+      );
+      return;
+    }
+    console.error("[Futurefolk] /futureself: scheduleCheckIn failed", err);
     await event.channel.postEphemeral(
       event.user,
       "Couldn't save the schedule. Try again in a moment.",
-      { fallbackToDM: true },
-    );
-    return;
-  }
-
-  try {
-    const run = await start(scheduledCheckInWorkflow, [
-      {
-        checkInId,
-        discordUserId: event.user.userId,
-        horizon,
-        topic: about,
-        scheduledForIso: scheduledFor.toISOString(),
-      },
-    ]);
-    // Best-effort: link the row to its workflow run so /profile can cancel
-    // it later. If this update fails, the row is still in 'pending' and the
-    // workflow runs as scheduled — we just lose the cancel-from-UI ability
-    // for this one row.
-    try {
-      await setCheckInWorkflowRunId(checkInId, run.runId);
-    } catch (err) {
-      console.error(
-        "[Futurefolk] /futureself: setCheckInWorkflowRunId failed",
-        err,
-      );
-    }
-  } catch (err) {
-    console.error("[Futurefolk] /futureself: start workflow failed", err);
-    await event.channel.postEphemeral(
-      event.user,
-      "Couldn't start the scheduled workflow. Try again in a moment.",
       { fallbackToDM: true },
     );
     return;
@@ -249,20 +241,6 @@ async function handleScheduledInvocation(args: {
     `Scheduled. You, ${horizonLabel}, will DM you on ${formatScheduledDate(scheduledFor)} about: ${about}`,
     { fallbackToDM: true },
   );
-}
-
-function parseScheduleInput(value: string): Date | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  // Accept either a bare YYYY-MM-DD (interpreted as midnight UTC, the
-  // user's expected "morning of that day" semantics in most time zones —
-  // the alternative is to pin to local time, but slash commands have no
-  // tz info on the server) or a full ISO 8601 timestamp.
-  const isoDateOnly = /^\d{4}-\d{2}-\d{2}$/;
-  const candidate = isoDateOnly.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
-  const parsed = new Date(candidate);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
 }
 
 function formatScheduledDate(date: Date): string {
